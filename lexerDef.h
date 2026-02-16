@@ -1,3 +1,4 @@
+#include <stdio.h>
 typedef enum TokenType{
     TK_ASSIGNOP,
     TK_COMMENT,
@@ -54,6 +55,7 @@ typedef enum TokenType{
     TK_GT,
     TK_GE,
     TK_NE,
+    TK_ERROR
 }TokenType;
 
 typedef struct Token{
@@ -61,10 +63,12 @@ typedef struct Token{
     char lexeme[30];
     unsigned int lexemeSize;
     unsigned int lineNo;
+    int is_error;
     
 }Token;
 
 typedef struct State{
+    FILE* file;
     int line;
     Token* tokenList;
 }State;
@@ -73,3 +77,7 @@ typedef struct String{
     char* buffer;
     int len;
 }String;
+
+typedef struct Hashmap{
+    TokenType* keywords;
+}Hashmap;
