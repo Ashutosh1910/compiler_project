@@ -67,10 +67,17 @@ typedef struct Token{
     
 }Token;
 
+typedef struct TokenList{
+    Token* buf;
+    int size;
+    int capacity;
+}TokenList;
+
 typedef struct State{
     FILE* file;
     int line;
-    Token* tokenList;
+    int isAtEnd;
+    TokenList tokenList;
 }State;
 
 typedef struct String{
