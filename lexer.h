@@ -14,7 +14,7 @@ void record(State* S);
 
 
 
-int match(char a,char b);
+int match(char a,char b,State* s);
 
 
 void appendToString(char c,String* s);
@@ -33,6 +33,8 @@ int hash(char* s);
 int isSmallAlpha(char c);
 int isAlpha(char c);
 int isAlphaNum(char c);
+int isNum(char c);
+
 
 
 

@@ -30,7 +30,8 @@ typedef enum TokenType{
     TK_SEM,
     TK_COLON,
     TK_DOT,
-    TK_ENDWHILE,    
+    TK_ENDWHILE,  
+    TK_OP,  
     TK_CL,
     TK_IF,
     TK_THEN,
@@ -77,6 +78,7 @@ typedef struct State{
     FILE* file;
     int line;
     int isAtEnd;
+    int scanNext;
     TokenList tokenList;
 }State;
 
