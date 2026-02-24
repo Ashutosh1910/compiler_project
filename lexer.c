@@ -226,6 +226,8 @@ void removeComments(){
 }
 
 void printTokens(){
+    // TODO : COMPLETE DFA IMPLEMENTATION,MATCH ERROR PRINTING FORMAT,
+    //     CLEANUP CODE, PRINT TOKENS IN TABLE FORM, REMOVE COMMENT PROBLEM 
     State state=initializeState("test.txt");
     
     scan(&state);
