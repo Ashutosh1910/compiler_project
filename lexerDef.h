@@ -1,4 +1,5 @@
 #include <stdio.h>
+#define HASH_SIZE 53
 typedef enum TokenType{
     TK_ASSIGNOP,
     TK_COMMENT,
@@ -16,6 +17,7 @@ typedef enum TokenType{
     TK_ENDUNION,
     TK_DEFINETYPE,
     TK_AS,
+    TK_TYPE,
     TK_MAIN,
     TK_GLOBAL,
     TK_PARAMETER,
@@ -61,10 +63,9 @@ typedef enum TokenType{
 
 typedef struct Token{
     TokenType type;
-    char lexeme[30];
+    char lexeme[31];
     unsigned int lexemeSize;
     unsigned int lineNo;
-    int is_error;
     
 }Token;
 
@@ -74,19 +75,22 @@ typedef struct TokenList{
     int capacity;
 }TokenList;
 
+typedef struct {
+    const char *key;
+    TokenType token;
+    int occupied;
+} HashEntry;
+
+typedef struct {
+    HashEntry table[HASH_SIZE];
+} Hashmap;
 typedef struct State{
     FILE* file;
     int line;
     int isAtEnd;
     int scanNext;
     TokenList tokenList;
+    Hashmap keywordMap;
 }State;
 
-typedef struct String{
-    char* buffer;
-    int len;
-}String;
 
-typedef struct Hashmap{
-    TokenType* keywords;
-}Hashmap;
