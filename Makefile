@@ -1,5 +1,5 @@
 run:
-	gcc -c driver.c lexer.c logging.c
-	gcc driver.o lexer.o logging.o
-	./a.out no-error.txt
-	rm *.o *.out 
+	gcc-13 -c driver.c lexer.c logging.c parser.c
+	gcc-13 driver.o lexer.o logging.o parser.o -o compiler
+	./compiler t6.txt
+	rm -f *.o

@@ -1,96 +1,101 @@
+#ifndef LEXER_DEF_H
+#define LEXER_DEF_H
 #include <stdio.h>
 #define HASH_SIZE 53
-typedef enum TokenType{
-    TK_ASSIGNOP,
-    TK_COMMENT,
-    TK_FIELDID,
-    TK_ID ,
-    TK_NUM,
-    TK_RNUM,
-    TK_FUNID ,
-    TK_RUID,
-    TK_WITH, 
-    TK_PARAMETERS,
-    TK_END,
-    TK_WHILE,
-    TK_UNION,
-    TK_ENDUNION,
-    TK_DEFINETYPE,
-    TK_AS,
-    TK_TYPE,
-    TK_MAIN,
-    TK_GLOBAL,
-    TK_PARAMETER,
-    TK_LIST,
-    TK_SQL,
-    TK_SQR,
-    TK_INPUT,
-    TK_OUTPUT,
-    TK_INT,
-    TK_REAL,
-    TK_COMMA,
-    TK_SEM,
-    TK_COLON,
-    TK_DOT,
-    TK_ENDWHILE,  
-    TK_OP,  
-    TK_CL,
-    TK_IF,
-    TK_THEN,
-    TK_ENDIF,
-    TK_READ,
-    TK_WRITE,
-    TK_RETURN,
-    TK_PLUS,
-    TK_MINUS,
-    TK_MUL,
-    TK_DIV,
-    TK_CALL,
-    TK_RECORD,
-    TK_ENDRECORD,
-    TK_ELSE,
-    TK_AND,
-    TK_OR,
-    TK_NOT,
-    TK_LT,
-    TK_LE,
-    TK_EQ,
-    TK_GT,
-    TK_GE,
-    TK_NE,
-    TK_ERROR
-}TokenType;
+typedef enum TokenType {
+  TK_ASSIGNOP,
+  TK_COMMENT,
+  TK_FIELDID,
+  TK_ID,
+  TK_NUM,
+  TK_RNUM,
+  TK_FUNID,
+  TK_RUID,
+  TK_WITH,
+  TK_PARAMETERS,
+  TK_END,
+  TK_WHILE,
+  TK_UNION,
+  TK_ENDUNION,
+  TK_DEFINETYPE,
+  TK_AS,
+  TK_TYPE,
+  TK_MAIN,
+  TK_GLOBAL,
+  TK_PARAMETER,
+  TK_LIST,
+  TK_SQL,
+  TK_SQR,
+  TK_INPUT,
+  TK_OUTPUT,
+  TK_INT,
+  TK_REAL,
+  TK_COMMA,
+  TK_SEM,
+  TK_COLON,
+  TK_DOT,
+  TK_ENDWHILE,
+  TK_OP,
+  TK_CL,
+  TK_IF,
+  TK_THEN,
+  TK_ENDIF,
+  TK_READ,
+  TK_WRITE,
+  TK_RETURN,
+  TK_PLUS,
+  TK_MINUS,
+  TK_MUL,
+  TK_DIV,
+  TK_CALL,
+  TK_RECORD,
+  TK_ENDRECORD,
+  TK_ELSE,
+  TK_AND,
+  TK_OR,
+  TK_NOT,
+  TK_LT,
+  TK_LE,
+  TK_EQ,
+  TK_GT,
+  TK_GE,
+  TK_NE,
+  TK_EPS,
+  TK_DOLLAR,
+  TK_ERROR,
+  NUM_TOKENS
+} TokenType;
 
-typedef struct Token{
-    TokenType type;
-    char lexeme[31];
-    unsigned int lexemeSize;
-    unsigned int lineNo;
-    
-}Token;
+typedef struct Token {
+  TokenType type;
+  char lexeme[31];
+  unsigned int lexemeSize;
+  unsigned int lineNo;
 
-typedef struct TokenList{
-    Token* buf;
-    int size;
-    int capacity;
-}TokenList;
+} Token;
+
+typedef struct TokenList {
+  Token *buf;
+  int size;
+  int capacity;
+} TokenList;
 
 typedef struct {
-    const char *key;
-    TokenType token;
-    int occupied;
+  const char *key;
+  TokenType token;
+  int occupied;
 } HashEntry;
 
 typedef struct {
-    HashEntry table[HASH_SIZE];
+  HashEntry table[HASH_SIZE];
 } Hashmap;
-typedef struct State{
-    FILE* file;
-    int line;
-    int isAtEnd;
-    int scanNext;
-    TokenList tokenList;
-    Hashmap keywordMap;
-}State;
+typedef struct State {
+  FILE *file;
+  int line;
+  int isAtEnd;
+  int scanNext;
+  TokenList tokenList;
+  Hashmap keywordMap;
+} State;
 
-
+#endif
