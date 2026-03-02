@@ -1,3 +1,4 @@
+//Group 51
 // Ashutosh Desai - 2023A7PS0675P
 // Anushka Doshi - 2023A7PS0597P
 // Aarya Jain - 2023A7PS0618P
@@ -435,9 +436,10 @@ void addChild(TreeNode *parent, TreeNode *child) {
 }
 
 void addSyntaxError(SyntaxError **head, int lineNo, const char *message) {
-  SyntaxError *err = (SyntaxError *)calloc(1, sizeof(SyntaxError));
+  SyntaxError *err = (SyntaxError *)malloc(sizeof(SyntaxError));
   err->lineNo = lineNo;
   strncpy(err->message, message, sizeof(err->message) - 1);
+  err->message[sizeof(err->message) - 1] = '\0';
 
   if (*head == NULL) {
     *head = err;
@@ -452,7 +454,7 @@ void addSyntaxError(SyntaxError **head, int lineNo, const char *message) {
 void printSyntaxErrors(SyntaxError *errors) {
   if (!errors)
     return;
-  
+
   int count = 0;
   for (SyntaxError *e = errors; e; e = e->next) {
     count++;
@@ -511,36 +513,7 @@ int isInSyncOrFollow(FirstFollowSets *ff, int nt, int tok) {
   return 0;
 }
 
-void addSyntaxErrorNoDup(SyntaxError **head, int *lastErrLine, int lineNo,
-                         const char *message) {
-  for (SyntaxError *p = *head; p; p = p->next) {
-    if (p->lineNo == lineNo && strcmp(p->message, message) == 0)
-      return;
-  }
-
-  int isLexerError = (strncmp(message, "Unknown", 7) == 0);
-  if (!isLexerError && *lastErrLine == lineNo)
-    return;
-
-  if (!isLexerError)
-    *lastErrLine = lineNo;
-
-  SyntaxError *err = (SyntaxError *)calloc(1, sizeof(SyntaxError));
-  err->lineNo = lineNo;
-  strncpy(err->message, message, sizeof(err->message) - 1);
-
-  if (*head == NULL) {
-    *head = err;
-  } else {
-    SyntaxError *p = *head;
-    while (p->next)
-      p = p->next;
-    p->next = err;
-  }
-}
-
-void skipComments(TokenList *tokens, int *tokenIdx, SyntaxError **errors,
-                  int *lastErrLine) {
+void skipComments(TokenList *tokens, int *tokenIdx) {
   while (*tokenIdx < tokens->size &&
          (curToken(tokens, *tokenIdx) == TK_COMMENT)) {
     (*tokenIdx)++;
@@ -563,7 +536,7 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
   int tokenIdx = 0;
   int lastErrLine = -1;
 
-  skipComments(tokens, &tokenIdx, errors, &lastErrLine);
+  skipComments(tokens, &tokenIdx);
 
   while (!stackEmpty(&stack)) {
     StackEntry top = stackPeek(&stack);
@@ -585,12 +558,14 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
           stackPop(&stack);
           break;
         } else {
-          char msgBuf[256];
-          snprintf(msgBuf, sizeof(msgBuf),
-                   "Unexpected token '%s' (%s) after end of program",
-                   curLexeme(tokens, tokenIdx), tokenTypeToString(curTok));
-          addSyntaxErrorNoDup(errors, &lastErrLine, curLine(tokens, tokenIdx),
-                              msgBuf);
+          if (curLine(tokens, tokenIdx) != lastErrLine) {
+            char msgBuf[256];
+            snprintf(msgBuf, sizeof(msgBuf),
+                     "Unexpected token '%s' (%s) after end of program",
+                     curLexeme(tokens, tokenIdx), tokenTypeToString(curTok));
+            addSyntaxError(errors, curLine(tokens, tokenIdx), msgBuf);
+            lastErrLine = curLine(tokens, tokenIdx);
+          }
           break;
         }
       }
@@ -603,16 +578,19 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
           top.node->lexeme[30] = '\0';
         }
         tokenIdx++;
-        skipComments(tokens, &tokenIdx, errors, &lastErrLine);
+        skipComments(tokens, &tokenIdx);
       } else {
-        char msgBuf[256];
-        snprintf(msgBuf, sizeof(msgBuf),
-                 "The token %s for lexeme %s does not match with the expected "
-                 "token %s",
-                 tokenTypeToString(curTok), curLexeme(tokens, tokenIdx),
-                 tokenTypeToString((TokenType)top.sym.id));
-        addSyntaxErrorNoDup(errors, &lastErrLine, curLine(tokens, tokenIdx),
-                            msgBuf);
+        if (curLine(tokens, tokenIdx) != lastErrLine) {
+          char msgBuf[256];
+          snprintf(
+              msgBuf, sizeof(msgBuf),
+              "The token %s for lexeme %s does not match with the expected "
+              "token %s",
+              tokenTypeToString(curTok), curLexeme(tokens, tokenIdx),
+              tokenTypeToString((TokenType)top.sym.id));
+          addSyntaxError(errors, curLine(tokens, tokenIdx), msgBuf);
+          lastErrLine = curLine(tokens, tokenIdx);
+        }
         stackPop(&stack);
       }
     } else {
@@ -620,24 +598,41 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
       int ruleIdx = pt->table[nt][(int)curTok];
 
       if (ruleIdx == -1) {
-        char msgBuf[256];
-        snprintf(msgBuf, sizeof(msgBuf),
-                 "Invalid token %s encountered with value %s stack top %s",
-                 tokenTypeToString(curTok), curLexeme(tokens, tokenIdx),
-                 g->ntNames[nt]);
-        addSyntaxErrorNoDup(errors, &lastErrLine, curLine(tokens, tokenIdx),
-                            msgBuf);
-
-        if (isInSyncOrFollow(ff, nt, (int)curTok)) {
-          stackPop(&stack);
-        } else {
-          if (curTok == TK_DOLLAR) {
-            stackPop(&stack);
-          } else {
-            tokenIdx++;
-            skipComments(tokens, &tokenIdx, errors, &lastErrLine);
-          }
+        if (curLine(tokens, tokenIdx) != lastErrLine) {
+          char msgBuf[256];
+          snprintf(msgBuf, sizeof(msgBuf),
+                   "Invalid token %s encountered with value %s stack top %s",
+                   tokenTypeToString(curTok), curLexeme(tokens, tokenIdx),
+                   g->ntNames[nt]);
+          addSyntaxError(errors, curLine(tokens, tokenIdx), msgBuf);
+          lastErrLine = curLine(tokens, tokenIdx);
         }
+
+        while (curTok != TK_DOLLAR && pt->table[nt][(int)curTok] == -1 &&
+               !isInSyncOrFollow(ff, nt, (int)curTok)) {
+          tokenIdx++;
+          skipComments(tokens, &tokenIdx);
+          curTok = curToken(tokens, tokenIdx);
+        }
+
+        if (pt->table[nt][(int)curTok] != -1) {
+          continue;
+        }
+
+        stackPop(&stack);
+
+        while (!stackEmpty(&stack)) {
+          StackEntry next = stackPeek(&stack);
+          if (next.sym.kind == SYM_TERMINAL)
+            break;
+          int nextNt = next.sym.id;
+          if (pt->table[nextNt][(int)curTok] != -1)
+            break;
+          if (!isInSyncOrFollow(ff, nextNt, (int)curTok))
+            break;
+          stackPop(&stack);
+        }
+
         continue;
       }
 
@@ -805,8 +800,8 @@ void parseWithPrinting(const char *filename, const char *outputfile) {
   if (errors) {
     printSyntaxErrors(errors);
     freeSyntaxErrors(errors);
-  }else{
-    printf("No syntax errors in this %s\n",filename);
+  } else {
+    printf("No syntax errors in this %s\n", filename);
   }
 
   if (tree) {

@@ -1,3 +1,4 @@
+//Group 51
 // Ashutosh Desai - 2023A7PS0675P
 // Anushka Doshi - 2023A7PS0597P
 // Aarya Jain - 2023A7PS0618P
@@ -39,6 +40,7 @@ const char *getNTName(Grammar *g, int ntIndex);
 // FIRST and FOLLOW computation
 int firstOfString(Grammar *g, FirstFollowSets *ff, Symbol *syms, int count,
                   BitSet *dst);
+//We use dfs to resolve dependencies in first and follow when first of A depends on first of B, so we can compute first of B first and then first of A, thus skipping multiple passes
 void computeFirstDFS(Grammar *g, FirstFollowSets *ff, int nt, int *visited);
 void computeFollowDFS(Grammar *g, FirstFollowSets *ff, int nt, int *visited);
 void computeFirstAndFollow(Grammar *g, FirstFollowSets *ff);
@@ -65,10 +67,8 @@ StackEntry stackPeek(Stack *s);
 // error recovery
 int isSyncToken(int tok);
 int isInSyncOrFollow(FirstFollowSets *ff, int nt, int tok);
-void addSyntaxErrorNoDup(SyntaxError **head, int *lastErrLine, int lineNo,
-                         const char *message);
-void skipComments(TokenList *tokens, int *tokenIdx, SyntaxError **errors,
-                  int *lastErrLine);
+
+void skipComments(TokenList *tokens, int *tokenIdx);
 
 // parsing
 TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
