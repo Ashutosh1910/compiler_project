@@ -1,0 +1,52 @@
+%Test Case 8: Syntactically correct - records, unions, definetype, nested field access
+_main
+	record #vec
+		type real: x;
+		type real: y;
+	endrecord
+
+	record #seg
+		type #vec: start;
+		type #vec: finish;
+	endrecord
+
+	union #either
+		type #seg: line;
+		type #vec: point;
+	endunion
+
+	definetype record #vec as #point
+	definetype record #seg as #line
+	definetype union #either as #shape
+
+	record #wrapper
+		type int: tag;
+		type #shape: data;
+	endrecord
+
+	type record #wrapper : d3;
+	type real : b4;
+	type int : b2;
+	type real : c5;
+
+	b2 <--- 1;
+	d3.tag <--- b2;
+	b4 <--- d3.data.line.start.x + d3.data.line.finish.y;
+	c5 <--- (b4 * 2.50) - (d3.data.point.x / 3);
+
+	if(b2 == 1)
+	then
+		write(b4);
+	else
+		write(c5);
+	endif
+
+	while(b2 <= 10)
+		b4 <--- b4 + 1.00;
+		b2 <--- b2 + 1;
+	endwhile
+
+	write(d3.data.line.start.x);
+	write(d3.tag);
+	return;
+end

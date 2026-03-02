@@ -1,3 +1,7 @@
+//Ashutosh Desai - 2023A7PS0675P
+//Anushka Doshi - 2023A7PS0597P
+//Aarya Jain - 2023A7PS0618P
+//Devansh Agarwal - 2023A7PS0570P
 #include "lexerDef.h"
 #include <stdio.h>
 void removeComments(const char *filename);
@@ -5,7 +9,7 @@ void printTokens(const char *filename);
 
 void printError(const char *msg);
 void printLexerError(const char *msg, State *s);
-State initializeState(const char *fileName);
+State initializeState(const char *fileName,int logging);
 
 TokenList scan(State *S);
 

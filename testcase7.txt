@@ -1,0 +1,23 @@
+%Test Case 7: Syntactically correct - basic function with conditional and nested boolean
+_maxOfTwo input parameter list[int b2, int b3]
+output parameter list[int b4];
+	if(b2 >= b3)
+	then
+		b4 <--- b2;
+	else
+		b4 <--- b3;
+	endif
+	return [b4];
+end
+
+%Test Case 7 main - calls the function and uses result
+_main
+	type int : b5;
+	type int : b6;
+	type int : b7;
+	read(b5);
+	read(b6);
+	[b7] <--- call _maxOfTwo with parameters [b5, b6];
+	write(b7);
+	return;
+end

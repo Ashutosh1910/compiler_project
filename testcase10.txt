@@ -1,0 +1,61 @@
+%Test Case 10: Syntactically correct - nested if, record fields, function calls, boolean OR
+_classify input parameter list[real c2]
+output parameter list[int b3];
+	if(c2 < 0.00)
+	then
+		b3 <--- 0;
+	else
+		if(c2 == 0.00)
+		then
+			b3 <--- 1;
+		else
+			if(c2 > 100.00)
+			then
+				b3 <--- 3;
+			else
+				b3 <--- 2;
+			endif
+		endif
+	endif
+	return [b3];
+end
+
+_main
+	record #student
+		type real: marks;
+		type int: roll;
+		type int: grade;
+	endrecord
+
+	type record #student : b4;
+	type record #student : b5;
+	type int : b6;
+	type int : b7;
+	type real : c3;
+	type real : c4;
+
+	read(c3);
+	b4.marks <--- c3;
+	read(b6);
+	b4.roll <--- b6;
+
+	[b6] <--- call _classify with parameters [c3];
+	b4.grade <--- b6;
+
+	b5.marks <--- 95.50;
+	b5.roll <--- 42;
+	c4 <--- b5.marks;
+	[b7] <--- call _classify with parameters [c4];
+	b5.grade <--- b7;
+
+	if((b4.grade >= b5.grade) @@@ (b6 != b7))
+	then
+		write(b4.roll);
+	else
+		write(b5.roll);
+	endif
+
+	c3 <--- (b4.marks + b5.marks) / 2;
+	write(c3);
+	return;
+end

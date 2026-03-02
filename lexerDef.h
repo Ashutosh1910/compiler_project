@@ -1,3 +1,7 @@
+//Ashutosh Desai - 2023A7PS0675P
+//Anushka Doshi - 2023A7PS0597P
+//Aarya Jain - 2023A7PS0618P
+//Devansh Agarwal - 2023A7PS0570P
 #ifndef LEXER_DEF_H
 #define LEXER_DEF_H
 #include <stdio.h>
@@ -90,12 +94,13 @@ typedef struct {
   HashEntry table[HASH_SIZE];
 } Hashmap;
 typedef struct State {
+  TokenList tokenList;
+  Hashmap keywordMap;
   FILE *file;
   int line;
   int isAtEnd;
   int scanNext;
-  TokenList tokenList;
-  Hashmap keywordMap;
+  int logging;  
 } State;
 
 #endif

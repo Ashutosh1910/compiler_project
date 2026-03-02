@@ -1,0 +1,171 @@
+# BIRLA INSTITUTE OF TECHNOLOGY AND SCIENCE, PILANI
+## DEPARTMENT OF COMPUTER SCIENCE AND INFORMATION SYSTEMS
+### Compiler Construction (CS F363)
+### II Semester 2025-26
+### Compiler Project — Coding Details
+### (March 02, 2026)
+
+---
+
+## 1. Team Members Names and IDs
+
+| ID | Name |
+|---|---|
+| 2023A7PS0675P | Ashutosh Desai |
+| 2023A7PS0597P | Anushka Doshi |
+| 2023A7PS0618P | Aarya Jain |
+| 2023A7PS0570P | Devansh Agarwal |
+
+---
+
+## 2. Mention the names of the Submitted files
+
+| # | File | # | File |
+|---|---|---|---|
+| 1 | driver.c | 7 | parser.h |
+| 2 | lexer.c | 8 | parserDef.h |
+| 3 | lexer.h | 9 | grammar.txt |
+| 4 | lexerDef.h | 10 | Makefile |
+| 5 | logging.c | 11 | coding_details.pdf |
+| 6 | logging.h | | |
+
+---
+
+## 3. Total number of submitted files
+
+**11** (including the pdf file of this coding details pro forma)
+
+## 4. Have you compressed the folder as specified in the submission guidelines?
+
+**Yes**
+
+---
+
+## 5. Lexer Details
+
+**[A] Technique used for pattern matching:**
+DFA-based (deterministic finite automaton) pattern matching implemented as a single-pass `scan()` function using a switch-case on the current character with state managed via a `scanNext` flag for lookahead/retract.
+
+**[B] Keyword Handling Technique:**
+Keywords are stored in a hash map at initialization and looked up after scanning a FIELDID-pattern lexeme using `lookupKeyword()`.
+
+**[C] Hash function description, if used for keyword handling:**
+A polynomial rolling hash: `h = h * 31 + (unsigned char)s[i]`, result taken modulo `HASH_SIZE` (53). Collisions resolved via linear probing.
+
+**[D] Have you used twin buffer?**
+No
+
+**[E] Error handling and reporting (yes/No):**
+Yes
+
+**[F] Describe the errors handled by you:**
+Identifier/function name exceeding maximum length (20/30 characters), unrecognized characters, malformed operators (e.g. incomplete `!=`, `<--`, `&&&`, `@@@`), malformed real numbers (missing digits after decimal or after exponent `E`), and invalid identifier patterns.
+
+**[G] Data Structure Description for tokenInfo (in maximum two lines):**
+`Token` struct containing `TokenType type` (enum), `char lexeme[31]` (fixed-size string), `unsigned int lexemeSize`, and `unsigned int lineNo`. Tokens are stored in a dynamically resized `TokenList` (array of `Token` with `size` and `capacity`).
+
+---
+
+## 6. Parser Details
+
+### [A] High Level Data Structure Description
+
+**i. Grammar:**
+A `Grammar` struct containing an array of `GrammarRule` entries (max 100), each with an integer `lhs` (non-terminal index), an array of `Symbol` (kind + id) as the RHS (max 20 symbols), and `rhsLen`. Non-terminal names are stored in a 2D char array indexed by their integer id.
+
+**ii. FIRST and FOLLOW sets:**
+`FirstFollowSets` struct containing two arrays of `BitSet` (one for FIRST, one for FOLLOW), indexed by non-terminal. Each `BitSet` is 2 × 64-bit unsigned integers (128 bits), where each bit position corresponds to a `TokenType` enum value — a bit is set if that token is in the set.
+
+**iii. Parse table:**
+`ParseTable` struct with a 2D integer array `table[MAX_NON_TERMINALS][NUM_TOKENS]`. Each entry stores the index of the grammar rule to apply, or -1 for an error entry. Filled using FIRST and FOLLOW sets per standard LL(1) table construction.
+
+**iv. Parse tree (node structure):**
+`TreeNode` struct with: `Symbol sym` (terminal or non-terminal), `char lexeme[31]`, `int lineNo`, `int ruleIndex` (grammar rule that expanded this node, -1 for leaves), `TreeNode *firstChild`, and `TreeNode *nextSibling`. This is a left-child right-sibling representation allowing each non-terminal node to have an arbitrary number of children.
+
+**v. Any other:**
+`TermMapEntry` hash table (open-addressing) for O(1) reverse mapping from terminal name strings to `TokenType` values, used during grammar loading.
+
+### [B] Parse tree
+
+**i. Constructed:** Yes
+
+**ii. Printing as per the given format:** Yes
+
+**iii. Describe the order adopted for printing:**
+Inorder traversal of the left-child right-sibling tree: recursively visit the first child, then print the current node, then recursively visit all remaining children (second child onward).
+
+### [C] Grammar and Computation of First and Follow Sets
+
+**i. Data structure for original grammar rules:**
+Array of `GrammarRule` structs inside the `Grammar` struct, loaded from `grammar.txt`.
+
+**ii. FIRST and FOLLOW sets computation automated:** Yes
+
+**iii. Name the functions for computation:**
+`computeFirstDFS`, `computeFollowDFS`, `computeFirstAndFollow`, `firstOfString`
+
+**iv. If computed manually:** N/A — fully automated.
+
+### [D] Error Handling
+
+**v. Attempted:** Yes
+
+**vi. Describe the types of errors handled:**
+Panic-mode error recovery with a synchronization token set (`;`, `end`, `endrecord`, `endunion`, `endif`, `endwhile`, `else`, `)`, `]`, `$`). On a parse table miss, if the current token is in FOLLOW(NT) or the sync set, the NT is popped; otherwise the offending token is skipped. Terminal mismatch errors pop the expected terminal. Duplicate/cascading errors on the same line are suppressed.
+
+---
+
+## 7. Compilation Details
+
+**[A] Makefile works:** Yes
+
+**[B] Code Compiles:** Yes
+
+**[C] Mention the .c files that do not compile:** None — all compile successfully.
+
+**[D] Any specific function that does not compile:** None
+
+**[E] Ensured compatibility with the specified gcc version:** Yes
+
+---
+
+## 8. Driver Details
+
+Does it take care of the options specified earlier: **Yes**
+(Options: 0 — Exit, 1 — Remove Comments, 2 — Print Tokens, 3 — Parse & Print Parse Tree, 4 — Print time taken)
+
+---
+
+## 9. Execution
+
+**[A] Status:**
+The compiler successfully tokenizes input source files using the DFA-based lexer, parses them using the LL(1) parse table with error recovery, constructs and prints the parse tree in the specified inorder format.
+
+**[B] Gives segmentation fault with any of the test cases (1–6):** No
+
+---
+
+## 10. Language features your lexer or parser is not able to handle
+
+None — all features of the specified language grammar are handled by the lexer and parser.
+
+---
+
+## 11. Are you availing the lifeline?
+
+No
+
+---
+
+## 12. Declaration
+
+We, Ashutosh Desai, Anushka Doshi, Aarya Jain, Devansh Agarwal, declare that we have put our genuine efforts in creating the compiler project code and have submitted the code developed only by us. We have not copied any piece of code from any source. If our code is found plagiarized in any form or degree, we understand that a disciplinary action as per the institute rules will be taken against all of us in our team and we will accept the penalty as decided by the department of Computer Science and Information Systems, BITS, Pilani.
+
+| Name | ID |
+|---|---|
+| Ashutosh Desai | 2023A7PS0675P |
+| Anushka Doshi | 2023A7PS0597P |
+| Aarya Jain | 2023A7PS0618P |
+| Devansh Agarwal | 2023A7PS0570P |
+
+**Date:** March 02, 2026

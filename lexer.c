@@ -1,3 +1,7 @@
+//Ashutosh Desai - 2023A7PS0675P
+//Anushka Doshi - 2023A7PS0597P
+//Aarya Jain - 2023A7PS0618P
+//Devansh Agarwal - 2023A7PS0570P
 #include "logging.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,7 +50,7 @@ unsigned int hash(const char *s) {
   unsigned int i = 0;
 
   while (s[i]) {
-    h = h * 31 + (unsigned char)s[i];
+    h = h * 31 + (unsigned int)s[i];
     i++;
   }
   return h % HASH_SIZE;
@@ -111,7 +115,7 @@ TokenType lookupKeyword(Hashmap *h, const char *key) {
   return TK_ERROR;
 }
 
-State initializeState(const char *fileName) {
+State initializeState(const char *fileName,int logging) {
 
   FILE *file = fopen(fileName, "r");
   if (!file)
@@ -121,23 +125,24 @@ State initializeState(const char *fileName) {
              .line = 1,
              .scanNext = 1,
              .tokenList = newTokenList(10),
-             .keywordMap = initializeKeywordMap()};
+             .keywordMap = initializeKeywordMap(),
+            .logging = logging};
   return s;
 }
 
-void appendToTokenList(Token c, TokenList *t) {
+void appendToTokenList(Token c, State* s) {
 
   // printf("starting to add\n");
-  if (t->size < t->capacity) {
-    t->buf[t->size] = c;
-    t->size++;
+  if (s->tokenList.size < s->tokenList.capacity) {
+    s->tokenList.buf[s->tokenList.size] = c;
+    s->tokenList.size++;
   } else {
-    t->buf = (Token *)realloc(t->buf, sizeof(Token) * t->capacity * 2);
-    t->capacity = t->capacity * 2;
-    t->buf[t->size] = c;
-    t->size++;
+    s->tokenList.buf = (Token *)realloc(s->tokenList.buf, sizeof(Token) * s->tokenList.capacity * 2);
+    s->tokenList.capacity = s->tokenList.capacity * 2;
+    s->tokenList.buf[s->tokenList.size] = c;
+    s->tokenList.size++;
   }
-  printToken(c);
+  if (s->logging) printToken(c);
 }
 
 TokenList scan(State *s) {
@@ -160,67 +165,67 @@ TokenList scan(State *s) {
     case '\t':
       break;
     case '+': {
-      appendToTokenList(newToken(TK_PLUS, s), &s->tokenList);
+      appendToTokenList(newToken(TK_PLUS, s),s);
       break;
     }
     case ',': {
-      appendToTokenList(newToken(TK_COMMA, s), &s->tokenList);
+      appendToTokenList(newToken(TK_COMMA, s),s);
       break;
     }
     case ';': {
-      appendToTokenList(newToken(TK_SEM, s), &s->tokenList);
+      appendToTokenList(newToken(TK_SEM, s),s);
       break;
     }
     case ':': {
-      appendToTokenList(newToken(TK_COLON, s), &s->tokenList);
+      appendToTokenList(newToken(TK_COLON, s),s);
       break;
     }
     case '.': {
-      appendToTokenList(newToken(TK_DOT, s), &s->tokenList);
+      appendToTokenList(newToken(TK_DOT, s),s);
       break;
     }
     case '-': {
-      appendToTokenList(newToken(TK_MINUS, s), &s->tokenList);
+      appendToTokenList(newToken(TK_MINUS, s),s);
       break;
     }
     case '*': {
-      appendToTokenList(newToken(TK_MUL, s), &s->tokenList);
+      appendToTokenList(newToken(TK_MUL, s),s);
       break;
     }
     case '/': {
-      appendToTokenList(newToken(TK_DIV, s), &s->tokenList);
+      appendToTokenList(newToken(TK_DIV, s),s);
       break;
     }
     case '(': {
-      appendToTokenList(newToken(TK_OP, s), &s->tokenList);
+      appendToTokenList(newToken(TK_OP, s),s);
       break;
     }
     case ')': {
-      appendToTokenList(newToken(TK_CL, s), &s->tokenList);
+      appendToTokenList(newToken(TK_CL, s),s);
       break;
     }
     case '[': {
-      appendToTokenList(newToken(TK_SQL, s), &s->tokenList);
+      appendToTokenList(newToken(TK_SQL, s),s);
       break;
     }
     case ']': {
-      appendToTokenList(newToken(TK_SQR, s), &s->tokenList);
+      appendToTokenList(newToken(TK_SQR, s),s);
       break;
     }
     case '~': {
-      appendToTokenList(newToken(TK_NOT, s), &s->tokenList);
+      appendToTokenList(newToken(TK_NOT, s),s);
       break;
     }
 
     case '!':
       c = fgetc(s->file);
       if (match('=', c, "expected !=", s))
-        appendToTokenList(newToken(TK_NE, s), &s->tokenList);
+        appendToTokenList(newToken(TK_NE, s),s);
       break;
     case '=':
       c = fgetc(s->file);
       if (match('=', c, "expected ==", s))
-        appendToTokenList(newToken(TK_EQ, s), &s->tokenList);
+        appendToTokenList(newToken(TK_EQ, s),s);
       break;
     case '@':
       c = fgetc(s->file);
@@ -228,7 +233,7 @@ TokenList scan(State *s) {
       if (match('@', c, "expected @@@", s)) {
         c = fgetc(s->file);
         if (match('@', c, "expected @@@", s))
-          appendToTokenList(newToken(TK_OR, s), &s->tokenList);
+          appendToTokenList(newToken(TK_OR, s),s);
       }
       break;
     case '&':
@@ -237,19 +242,19 @@ TokenList scan(State *s) {
       if (match('&', c, "expected &&&", s)) {
         c = fgetc(s->file);
         if (match('&', c, "expected &&&", s))
-          appendToTokenList(newToken(TK_AND, s), &s->tokenList);
+          appendToTokenList(newToken(TK_AND, s),s);
       }
       break;
     case '<':
       c = fgetc(s->file);
       if (c != '=' && c != '-') {
-        appendToTokenList(newToken(TK_LT, s), &s->tokenList);
+        appendToTokenList(newToken(TK_LT, s),s);
         s->scanNext = 0;
         break;
       }
 
       if (c == '=') {
-        appendToTokenList(newToken(TK_LE, s), &s->tokenList);
+        appendToTokenList(newToken(TK_LE, s),s);
         break;
       }
 
@@ -258,17 +263,17 @@ TokenList scan(State *s) {
         if (match('-', c, "expected <--", s)) {
           c = fgetc(s->file);
           if (match('-', c, "expected <--", s))
-            appendToTokenList(newToken(TK_ASSIGNOP, s), &s->tokenList);
+            appendToTokenList(newToken(TK_ASSIGNOP, s),s);
         }
       }
       break;
     case '>':
       c = fgetc(s->file);
       if (c != '=') {
-        appendToTokenList(newToken(TK_GT, s), &s->tokenList);
+        appendToTokenList(newToken(TK_GT, s),s);
         s->scanNext = 0;
       } else {
-        appendToTokenList(newToken(TK_GE, s), &s->tokenList);
+        appendToTokenList(newToken(TK_GE, s),s);
       }
       break;
 
@@ -295,7 +300,7 @@ TokenList scan(State *s) {
         break;
       }
       rtoken.lexeme[rtoken.lexemeSize] = '\0';
-      appendToTokenList(rtoken, &s->tokenList);
+      appendToTokenList(rtoken,s);
       s->scanNext = 0;
       break;
 
@@ -360,10 +365,10 @@ TokenList scan(State *s) {
 
       s->scanNext = 0;
       fun.lexeme[fun.lexemeSize] = '\0';
-      appendToTokenList(fun, &s->tokenList);
+      appendToTokenList(fun,s);
       break;
     case '%':
-      appendToTokenList(newToken(TK_COMMENT, s), &s->tokenList);
+      appendToTokenList(newToken(TK_COMMENT, s),s);
       while (c != '\n') {
         c = fgetc(s->file);
       }
@@ -386,7 +391,7 @@ TokenList scan(State *s) {
         } while (isNum(c) && num_digits < MAX_VARIABLE_LEN);
 
         if (c != '.') {
-          appendToTokenList(num, &s->tokenList);
+          appendToTokenList(num,s);
           s->scanNext = 0;
         } else {
           num.lexeme[num.lexemeSize++] = c;
@@ -446,7 +451,7 @@ TokenList scan(State *s) {
             break;
           }
           num.lexeme[num.lexemeSize] = '\0';
-          appendToTokenList(num, &s->tokenList);
+          appendToTokenList(num,s);
         }
       } else if (isSmallAlpha(c)) {
         Token var = newToken(TK_FIELDID, s);
@@ -519,18 +524,19 @@ TokenList scan(State *s) {
         }
         s->scanNext = 0;
         var.lexeme[var.lexemeSize] = '\0';
-        appendToTokenList(var, &s->tokenList);
+        appendToTokenList(var,s);
       } else {
         printf("[LEXER-ERROR] at line %d: %c not recognized\n", s->line, c);
       }
     }
   }
+  appendToTokenList(newToken(TK_DOLLAR,s),s);
   fclose(s->file);
   return s->tokenList;
 }
 
 void removeComments(const char *filename) {
-  State state = initializeState(filename);
+  State state = initializeState(filename,0);
   char c;
   while (c != EOF) {
     c = fgetc(state.file);
@@ -550,7 +556,7 @@ void removeComments(const char *filename) {
 void printTokens(const char *filename) {
   // TODO :MATCH ERROR PRINTING FORMAT,REPLACE STRCMP WITH OWN VERSION
 
-  State state = initializeState(filename);
+  State state = initializeState(filename,1);
 
   TokenList tl = scan(&state);
 

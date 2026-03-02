@@ -1,3 +1,7 @@
+//Ashutosh Desai - 2023A7PS0675P
+//Anushka Doshi - 2023A7PS0597P
+//Aarya Jain - 2023A7PS0618P
+//Devansh Agarwal - 2023A7PS0570P
 #include "lexerDef.h"
 const char *tokenTypeToString(TokenType type) {
   switch (type) {
@@ -125,6 +129,115 @@ const char *tokenTypeToString(TokenType type) {
     return "NUM_TOKENS";
   default:
     return "UNKNOWN_TOKEN";
+  }
+}
+
+const char *tokenTypeToLexeme(Token* t) {
+  switch (t->type) {
+  case TK_ASSIGNOP:
+    return "<---";
+  case TK_WITH:
+    return "with";
+  case TK_PARAMETERS:
+    return "parameters";
+  case TK_END:
+    return "end";
+  case TK_WHILE:
+    return "while";
+  case TK_UNION:
+    return "union";
+  case TK_ENDUNION:
+    return "endunion";
+  case TK_DEFINETYPE:
+    return "definetype";
+  case TK_AS:
+    return "as";
+  case TK_TYPE:
+    return "type";
+  case TK_MAIN:
+    return "_main";
+  case TK_GLOBAL:
+    return "global";
+  case TK_PARAMETER:
+    return "parameter";
+  case TK_LIST:
+    return "list";
+  case TK_SQL:
+    return "[";
+  case TK_SQR:
+    return "]";
+  case TK_INPUT:
+    return "input";
+  case TK_OUTPUT:
+    return "output";
+  case TK_INT:
+    return "int";
+  case TK_REAL:
+    return "real";
+  case TK_COMMA:
+    return ",";
+  case TK_SEM:
+    return ";";
+  case TK_COLON:
+    return ":";
+  case TK_DOT:
+    return ".";
+  case TK_ENDWHILE:
+    return "endwhile";
+  case TK_OP:
+    return "(";
+  case TK_CL:
+    return ")";
+  case TK_IF:
+    return "if";
+  case TK_THEN:
+    return "then";
+  case TK_ENDIF:
+    return "endif";
+  case TK_READ:
+    return "read";
+  case TK_WRITE:
+    return "write";
+  case TK_RETURN:
+    return "return";
+  case TK_PLUS:
+    return "+";
+  case TK_MINUS:
+    return "-";
+  case TK_MUL:
+    return "*";
+  case TK_DIV:
+    return "/";
+  case TK_CALL:
+    return "call";
+  case TK_RECORD:
+    return "record";
+  case TK_ENDRECORD:
+    return "endrecord";
+  case TK_ELSE:
+    return "else";
+  case TK_AND:
+    return "&&&";
+  case TK_OR:
+    return "@@@";
+  case TK_NOT:
+    return "~";
+  case TK_LT:
+    return "<";
+  case TK_LE:
+    return "<=";
+  case TK_EQ:
+    return "==";
+  case TK_GT:
+    return ">";
+  case TK_GE:
+    return ">=";
+  case TK_NE:
+    return "!=";
+  case TK_DOLLAR:
+    return "$";
+  default:
+    return t->lexeme;
   }
 }
 
