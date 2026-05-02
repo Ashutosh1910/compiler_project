@@ -343,7 +343,7 @@ static char *genBooleanExpression(CodeGenContext *ctx, TreeNode *node) {
   if (child->sym.kind == SYM_TERMINAL && child->sym.id == (int)TK_NOT) {
     char *inner = genBooleanExpression(ctx, childAt(node, 2));
     char *temp = newTemp(ctx);
-    emitLine(ctx, "%s = %s%s", temp, opLexeme(TK_NOT), inner);
+    emitLine(ctx, "%s = %s %s", temp, opLexeme(TK_NOT), inner);
     return temp;
   }
   char *left = genVar(ctx, child);
@@ -483,12 +483,12 @@ static void genFunction(CodeGenContext *ctx, TreeNode *node) {
   ctx->indent++;
   if (inputPar) {
     char *params = buildParamList(ctx, childAt(inputPar, 4));
-    if (params[0])
+    if (params && params[0] != '\0')
       emitLine(ctx, "params %s", params);
   }
   if (outputPar && !isEpsNode(outputPar)) {
     char *returns = buildParamList(ctx, childAt(outputPar, 4));
-    if (returns[0])
+    if (returns && returns[0] != '\0')
       emitLine(ctx, "returns %s", returns);
   }
   genStmts(ctx, stmts);
