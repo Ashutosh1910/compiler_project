@@ -5,6 +5,7 @@
 //Devansh Agarwal - 2023A7PS0570P
 #include "lexer.h"
 #include "parser.h"
+#include "codegen.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -23,6 +24,7 @@ int main(int argc, const char **args) {
     printf("  2 - Print Tokens\n");
     printf("  3 - Parse & Print Parse Tree\n");
     printf("  4 - Print time taken for lexical analysis and syntax analysis\n");
+    printf("  5 - Generate intermediate code\n");
 
     scanf("\n%c", &n);
     switch (n) {
@@ -50,6 +52,10 @@ int main(int argc, const char **args) {
       total_CPU_time_in_seconds = total_CPU_time / CLOCKS_PER_SEC;
       printf("\nTotal CPU time taken: %f milliseconds\n", total_CPU_time);
       printf("\nTotal CPU time taken: %f seconds\n", total_CPU_time_in_seconds);
+      break;
+    }
+    case '5': {
+      generateCode(args[1], args[2]);
       break;
     }
     default: {
