@@ -1,0 +1,19 @@
+% Unbounded recursion stops with an error message instead of crashing.
+%? stdout: start
+%? stdout: Runtime error: stack overflow (recursion too deep)
+%? exit: 1
+_down input parameter list [int b2]
+output parameter list [int b3];
+	b2 <--- b2 + 1;
+	[b3] <--- call _down with parameters [b2];
+	return [b3];
+end
+
+_main
+	type int : b2;
+	type int : b3;
+	print("start\n");
+	[b3] <--- call _down with parameters [b2];
+	write(b3);
+	return;
+end

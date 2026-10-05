@@ -1,0 +1,62 @@
+% Local and global arrays of int and real: zero-initialised, indexed by
+% expressions, used in conditions, read into and written element by element.
+%? stdin: 5 7
+%? stdin: 1.25
+%? stdout: 0 0
+%? stdout: 55
+%? stdout: 10 9 8 7 6 5 4 3 2 1
+%? stdout: 12
+%? stdout: 1.25
+%? stdout: 3.75
+%? stdout: 3
+_fill input parameter list [int b2];
+	% writes the global array d2, which is declared in _main
+	type int : b3;
+	b3 <--- 0;
+	while (b3 < 10)
+		d2[b3] <--- b3 + 1;
+		b3 <--- b3 + 1;
+	endwhile
+	return;
+end
+
+_main
+	type int[10] : d2 : global;
+	type int[10] : b2;
+	type real[4] : c2;
+	type int : b3;
+	type int : b4;
+	print(b2[0], " ", d2[9], "\n");
+	call _fill with parameters [b3];
+	b3 <--- 0;
+	b4 <--- 0;
+	while (b3 < 10)
+		b4 <--- b4 + d2[b3];
+		b2[9 - b3] <--- d2[b3];
+		b3 <--- b3 + 1;
+	endwhile
+	write(b4);
+	b3 <--- 0;
+	while (b3 < 10)
+		print(b2[b3]);
+		if (b3 < 9) then
+			print(" ");
+		endif
+		b3 <--- b3 + 1;
+	endwhile
+	print("\n");
+	read(b2[0]);
+	read(b2[b2[0] - 4]);
+	b4 <--- b2[0] + b2[1];
+	write(b4);
+	read(c2[3]);
+	write(c2[3]);
+	c2[0] <--- c2[3] + 2.50;
+	write(c2[0]);
+	b3 <--- 0;
+	while (d2[b3] != 4)
+		b3 <--- b3 + 1;
+	endwhile
+	write(b3);
+	return;
+end

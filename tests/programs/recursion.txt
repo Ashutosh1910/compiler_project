@@ -1,0 +1,92 @@
+% Recursion, mutual recursion and calls to functions defined later.
+%? stdout: 3628800
+%? stdout: 6765
+%? stdout: 1
+%? stdout: 0
+%? stdout: 15
+_fact input parameter list [int b2]
+output parameter list [int b3];
+	type int : b4;
+	if (b2 <= 1) then
+		b3 <--- 1;
+	else
+		b4 <--- b2 - 1;
+		[b3] <--- call _fact with parameters [b4];
+		b3 <--- b3 * b2;
+	endif
+	return [b3];
+end
+
+_fib input parameter list [int b2]
+output parameter list [int b3];
+	type int : b4;
+	type int : b5;
+	type int : b6;
+	if (b2 < 2) then
+		b3 <--- b2;
+	else
+		b4 <--- b2 - 1;
+		[b5] <--- call _fib with parameters [b4];
+		b4 <--- b2 - 2;
+		[b6] <--- call _fib with parameters [b4];
+		b3 <--- b5 + b6;
+	endif
+	return [b3];
+end
+
+_even input parameter list [int b2]
+output parameter list [int b3];
+	type int : b4;
+	if (b2 == 0) then
+		b3 <--- 1;
+	else
+		b4 <--- b2 - 1;
+		[b3] <--- call _odd with parameters [b4];
+	endif
+	return [b3];
+end
+
+_odd input parameter list [int b2]
+output parameter list [int b3];
+	type int : b4;
+	if (b2 == 0) then
+		b3 <--- 0;
+	else
+		b4 <--- b2 - 1;
+		[b3] <--- call _even with parameters [b4];
+	endif
+	return [b3];
+end
+
+_first input parameter list [int b2]
+output parameter list [int b3];
+	[b3] <--- call _later with parameters [b2];
+	return [b3];
+end
+
+_later input parameter list [int b2]
+output parameter list [int b3];
+	b3 <--- b2 * 3;
+	return [b3];
+end
+
+_main
+	type int : b2;
+	type int : b3;
+	b2 <--- 10;
+	[b3] <--- call _fact with parameters [b2];
+	write(b3);
+	b2 <--- 20;
+	[b3] <--- call _fib with parameters [b2];
+	write(b3);
+	b2 <--- 10;
+	[b3] <--- call _even with parameters [b2];
+	write(b3);
+	b2 <--- 7;
+	[b3] <--- call _even with parameters [b2];
+	write(b3);
+	b2 <--- 5;
+	[b3] <--- call _first with parameters [b2];
+	write(b3);
+	return;
+end

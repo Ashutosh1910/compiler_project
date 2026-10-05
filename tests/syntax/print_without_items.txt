@@ -1,0 +1,5 @@
+% print needs at least one item.
+_main
+	print(); %? syntax-error
+	return;
+end

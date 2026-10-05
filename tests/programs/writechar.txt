@@ -1,0 +1,15 @@
+% writechar writes the low 8 bits of its value as one byte.
+%? stdout: ABC
+%? stdout: A!
+_main
+	type int : b2;
+	b2 <--- 'A';
+	writechar(b2);
+	writechar(b2 + 1);
+	writechar('C');
+	writechar('\n');
+	writechar(256 + 'A');
+	writechar(33);
+	writechar(10);
+	return;
+end

@@ -1,0 +1,13 @@
+% exit flushes the output and stops the program with the given status.
+%? stdout: before
+%? exit: 3
+_main
+	type int : b2;
+	print("before\n");
+	b2 <--- 1;
+	if (b2 == 1) then
+		exit(b2 + 2);
+	endif
+	print("after\n");
+	return;
+end

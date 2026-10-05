@@ -1,0 +1,27 @@
+% A function that calls a recursive function is checked over one activation
+% plus the whole stack use of its non-recursive callees: 3145744 bytes of
+% locals plus a call of _g (16-byte block, 3153760 bytes of stack) exceed 6 MiB.
+_g input parameter list [int b2];
+	type int[131072] : d2;
+	type int[131072] : d3;
+	type int[131072] : d4;
+	write(b2);
+	return;
+end
+
+_h input parameter list [int b2]
+output parameter list [int b3];
+	[b3] <--- call _h with parameters [b2];
+	return [b3];
+end
+
+_main %? error: _main needs about 6299536 bytes of stack for a single call; the limit is 6291456
+	type int[131072] : d2;
+	type int[131072] : d3;
+	type int[131072] : d4;
+	type int : b2;
+	type int : b3;
+	call _g with parameters [b2];
+	[b3] <--- call _h with parameters [b2];
+	return;
+end

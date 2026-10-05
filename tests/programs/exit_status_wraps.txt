@@ -1,0 +1,9 @@
+% The exit status is the value modulo 256; output without a final newline
+% is still flushed.
+%? stdout: x
+%? exit: 255
+_main
+	print("x");
+	exit(0 - 1);
+	return;
+end

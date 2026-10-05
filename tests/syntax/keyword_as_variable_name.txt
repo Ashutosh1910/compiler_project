@@ -1,0 +1,5 @@
+% The new keywords cannot be used where a variable name is expected.
+_main
+	type int : print; %? syntax-error
+	return;
+end

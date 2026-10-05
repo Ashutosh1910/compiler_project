@@ -1,0 +1,8 @@
+% With no input at all the first readchar already returns -1.
+%? stdout: -1
+_main
+	type int : b2;
+	readchar(b2);
+	write(b2);
+	return;
+end

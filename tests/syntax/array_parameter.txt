@@ -1,0 +1,8 @@
+% Arrays cannot be parameters: the parameter list takes a plain type.
+_f input parameter list [int[5] b2]; %? syntax-error
+	write(1);
+	return;
+end
+_main
+	return;
+end

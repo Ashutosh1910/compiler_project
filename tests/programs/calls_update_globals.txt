@@ -1,0 +1,16 @@
+% A call in a loop body counts as an update of every global variable.
+%? stdout: 5
+_step input parameter list [int b2];
+	d2 <--- d2 + 1;
+	return;
+end
+
+_main
+	type int : d2 : global;
+	type int : b2;
+	while (d2 < 5)
+		call _step with parameters [b2];
+	endwhile
+	write(d2);
+	return;
+end

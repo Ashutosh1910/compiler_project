@@ -1,0 +1,25 @@
+% readchar returns each byte of the input, then -1 at end of input and on
+% every later call; writechar writes one byte.
+%? stdin: Hi there
+%? stdin: x
+%? stdout: Hi there
+%? stdout: x
+%? stdout: bytes=11 lines=2 eof=-1 again=-1
+_main
+	type int : b2;
+	type int : b3;
+	type int : b4;
+	readchar(b2);
+	while (b2 >= 0)
+		writechar(b2);
+		b3 <--- b3 + 1;
+		if (b2 == '\n') then
+			b4 <--- b4 + 1;
+		endif
+		readchar(b2);
+	endwhile
+	print("bytes=", b3, " lines=", b4, " eof=", b2);
+	readchar(b2);
+	print(" again=", b2, "\n");
+	return;
+end

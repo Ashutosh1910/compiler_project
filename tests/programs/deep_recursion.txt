@@ -1,0 +1,23 @@
+% 100000 nested calls (48 bytes of stack each) fit in the 6 MiB budget.
+%? stdout: 5000050000
+_sum input parameter list [int b2]
+output parameter list [int b3];
+	type int : b4;
+	if (b2 == 0) then
+		b3 <--- 0;
+	else
+		b4 <--- b2 - 1;
+		[b3] <--- call _sum with parameters [b4];
+		b3 <--- b3 + b2;
+	endif
+	return [b3];
+end
+
+_main
+	type int : b2;
+	type int : b3;
+	b2 <--- 100000;
+	[b3] <--- call _sum with parameters [b2];
+	write(b3);
+	return;
+end

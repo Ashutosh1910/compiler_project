@@ -1,0 +1,6 @@
+% The length of an array is an integer literal.
+_main
+	type int : b3;
+	type int[b3] : b2; %? syntax-error
+	return;
+end

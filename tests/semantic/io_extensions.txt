@@ -1,0 +1,28 @@
+% Operands of readchar, writechar, print and exit.
+_main
+	record #pt
+		type int : x;
+		type real : y;
+	endrecord
+	type int : b2;
+	type real : c2;
+	type #pt : d2;
+	type int[3] : b3;
+	readchar(b2);
+	readchar(d2.x);
+	readchar(b3[1]);
+	readchar(c2); %? error: readchar needs an int variable, not c2 of type real
+	readchar(d2.y); %? error: readchar needs an int variable, not d2.y of type real
+	readchar(d2); %? error: readchar needs an int variable, not d2 of type #pt
+	writechar(b2 + 'a');
+	writechar(c2); %? error: writechar needs an int value, not real
+	writechar(d2); %? error: writechar needs an int value, not #pt
+	print("x", b2, c2, d2.y, 'a', b3[0] * 2);
+	print(d2); %? error: print needs int or real values, not #pt
+	print("a", d2 + d2); %? error: print needs int or real values, not #pt
+	exit(b2 * 2);
+	exit(2.50); %? error: exit needs an int value, not real
+	exit(d2); %? error: exit needs an int value, not #pt
+	readchar(b4); %? error: variable b4 is not declared
+	return;
+end

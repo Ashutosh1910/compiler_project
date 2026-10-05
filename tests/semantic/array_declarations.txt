@@ -1,0 +1,30 @@
+% Array declaration errors, for locals and globals; uses of a variable whose
+% declaration failed are silent, and so is an expression that indexes a
+% non-array.
+_main
+	record #pt
+		type int : x;
+		type int : y;
+	endrecord
+	union #u
+		type int : i;
+		type real : r;
+	endunion
+	definetype record #pt as #ali
+	type #pt[0] : b2; %? error: array length must be between 1 and 131072, not 0 %? error: array element type must be int or real, not #pt
+	type #ali[2] : b3; %? error: array element type must be int or real, not #pt
+	type #u[2] : b4; %? error: array element type must be int or real, not #u
+	type #zz[3] : b5; %? error: undefined type #zz
+	type int[99999999999999999999] : b6; %? error: array length must be between 1 and 131072, not 99999999999999999999
+	type real[007] : c2;
+	type int[0] : d4 : global; %? error: array length must be between 1 and 131072, not 0
+	type #pt[2] : d5 : global; %? error: array element type must be int or real, not #pt
+	type int : b7;
+	b2[1] <--- b3[0] + b4[0];
+	b5[0] <--- b6[1];
+	d4[0] <--- d5[0] + 1;
+	c2[6] <--- 1.50;
+	b7 <--- b7[0] + 1; %? error: b7 is not an array (it has type int)
+	b7 <--- b7[0] + 1.50; %? error: b7 is not an array (it has type int)
+	return;
+end

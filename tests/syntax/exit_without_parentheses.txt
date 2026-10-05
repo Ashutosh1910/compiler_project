@@ -1,0 +1,5 @@
+% exit takes its status in parentheses.
+_main
+	exit 1; %? syntax-error
+	return;
+end

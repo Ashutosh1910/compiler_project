@@ -1,0 +1,19 @@
+% read leaves the rest of the line in the input; readchar continues there.
+%? stdin: 42 z
+%? stdout: 42
+%? stdout: 32 122 10 -1
+_main
+	type int : b2;
+	type int : b3;
+	type int : b4;
+	type int : b5;
+	type int : b6;
+	read(b2);
+	write(b2);
+	readchar(b3);
+	readchar(b4);
+	readchar(b5);
+	readchar(b6);
+	print(b3, " ", b4, " ", b5, " ", b6, "\n");
+	return;
+end

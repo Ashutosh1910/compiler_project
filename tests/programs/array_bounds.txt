@@ -1,0 +1,18 @@
+% An index outside 0 .. length-1 stops the program with exit status 1.
+%? stdout: 1
+%? stdout: Runtime error: index 5 out of bounds for array c2 of length 5 at line 15
+%? exit: 1
+_main
+	type int[5] : c2;
+	type int : b2;
+	b2 <--- 0;
+	while (b2 < 5)
+		c2[b2] <--- 1;
+		b2 <--- b2 + 1;
+	endwhile
+	write(c2[4]);
+	b2 <--- c2[0] + 3;
+	b2 <--- c2[b2 + 1];
+	write(b2);
+	return;
+end

@@ -1,0 +1,5 @@
+% write takes a variable or a number, not a string; use print.
+_main
+	write("abc"); %? syntax-error
+	return;
+end

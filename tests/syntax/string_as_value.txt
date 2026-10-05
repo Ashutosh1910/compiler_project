@@ -1,0 +1,6 @@
+% A string literal is only allowed as an item of print.
+_main
+	type int : b2;
+	b2 <--- "abc"; %? syntax-error
+	return;
+end
