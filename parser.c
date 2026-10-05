@@ -74,11 +74,15 @@ const char *curLexeme(TokenList *tokens, int tokenIdx) {
 }
 
 // Line to report an error at. At end of input that is the line of the last
-// real token, not the (possibly nonexistent) line where the file ends.
+// real token (comments do not count), not the possibly nonexistent line
+// where the file ends; with no real token at all, line 1.
 int errorLine(TokenList *tokens, int tokenIdx) {
-  if (curToken(tokens, tokenIdx) == TK_DOLLAR && tokenIdx > 0)
-    return curLine(tokens, tokenIdx - 1);
-  return curLine(tokens, tokenIdx);
+  if (curToken(tokens, tokenIdx) != TK_DOLLAR)
+    return curLine(tokens, tokenIdx);
+  for (int i = tokenIdx - 1; i >= 0; i--)
+    if (tokens->buf[i].type != TK_COMMENT)
+      return (int)tokens->buf[i].lineNo;
+  return 1;
 }
 
 void bs_clear(BitSet *s) {

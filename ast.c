@@ -12,6 +12,7 @@
 #include <string.h>
 
 static Grammar *G; // grammar of the tree being converted (for NT names)
+static int tooDeep; // set when fold() truncates an expression
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -182,6 +183,7 @@ static Expr *fold(TreeNode *opNode, Expr *acc, Expr *operand) {
   if (acc->depth > MAX_EXPR_DEPTH || operand->depth > MAX_EXPR_DEPTH) {
     freeExpr(operand);
     acc->depth = MAX_EXPR_DEPTH + 1;
+    tooDeep = 1;
     return acc;
   }
   return newBinop(opNode, acc, operand);
@@ -457,6 +459,7 @@ static Function *buildFunction(TreeNode *n) {
 // <mainFunction> ::= TK_MAIN <stmts> TK_END
 Program *buildAST(Grammar *g, TreeNode *root) {
   G = g;
+  tooDeep = 0;
   Program *p = xcalloc(1, sizeof(Program));
   Function **tail = &p->functions;
   for (TreeNode *o = kid(root, 0); !isEpsilon(o); o = kid(o, 1)) {
@@ -471,6 +474,7 @@ Program *buildAST(Grammar *g, TreeNode *root) {
   buildBody(kid(m, 1), mainF);
   mainF->endLine = kid(m, 2)->lineNo;
   *tail = mainF;
+  p->tooDeep = tooDeep;
   return p;
 }
 
@@ -602,6 +606,10 @@ static void printVarRef(FILE *out, AstVarRef *v) {
 // expressions are printed fully parenthesised, which makes precedence and
 // associativity visible
 static void printExpr(FILE *out, Expr *e) {
+  if (e->depth > MAX_EXPR_DEPTH) {
+    fputs("<expression nested too deeply; truncated>", out);
+    return;
+  }
   switch (e->kind) {
   case EXPR_NUM:
   case EXPR_RNUM:

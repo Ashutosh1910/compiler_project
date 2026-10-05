@@ -394,6 +394,11 @@ LEXER_CASES = [
      ["TK_RNUM 12345678901234567890123.50E+05"], []),
     ("24-digit number is an error, skipped whole", "b2 " + "1" * 24 + ".50 c3",
      ["TK_ID b2", "TK_ID c3"], [(1, "number has more than 23 digits")]),
+    ("24-digit number with an exponent is skipped whole",
+     "1" * 24 + "E+05 x", ["TK_FIELDID x"],
+     [(1, "number has more than 23 digits")]),
+    ("30-letter function id followed by digits", "_" + "a" * 29 + "12 ;",
+     ["TK_SEM"], [(1, "exceeded max size of function name (30)")]),
     ("function id too long in its digits", "_" + "a" * 20 + "1" * 10 + " ;",
      ["TK_SEM"], [(1, "exceeded max size of function name (30)")]),
     ("record id of 20 characters", "#" + "a" * 19, ["TK_RUID #" + "a" * 19],
@@ -889,6 +894,12 @@ def add_driver_tests(suite):
                      stdin="10\n\n 7 \nabc\n0\n")
         expect(p.stdout.count("wrong choice") == 2 and
                "compiles successfully" in p.stdout, p.stdout[-800:])
+        # out-of-range numbers must not wrap into a valid choice, and an
+        # over-long line is one wrong choice
+        p = compiler(src, os.path.join(BUILD, "src", "m.out"),
+                     stdin="4294967303\n4294967296\n" + "7" * 100 + "\n0\n")
+        expect(p.stdout.count("wrong choice") == 3 and
+               "compiles successfully" not in p.stdout, p.stdout[-800:])
     suite.add("driver: menu choices are whole lines", menu_reads_lines)
 
     def other_directory():
@@ -909,6 +920,15 @@ def add_stress_tests(suite):
                p.stdout[-500:])
     suite.add("stress: deeply nested parentheses give a syntax error",
               deep_parentheses)
+
+    def truncated_ast():
+        text = ("_main\n\ttype int : b2;\n\tb2 <--- " +
+                " + ".join(["1"] * 1005) + " + c7;\n\treturn;\nend\n")
+        p = compiler("--ast", scratch("trunc", text))
+        expect(p.returncode == 1 and "truncated" in p.stdout,
+               "--ast must flag a truncated expression:\n" + p.stdout[-500:])
+    suite.add("stress: --ast flags an expression truncated at the depth "
+              "limit", truncated_ast)
 
     def long_expression():
         text = ("_main\n\ttype int : b2;\n\tb2 <--- " +
@@ -934,10 +954,13 @@ def add_stress_tests(suite):
     suite.add("stress: 100000 statements compile and print", many_statements)
 
     def eof_error_line():
-        p = compiler("--check", scratch("eof", "_main\n\treturn;\n\n\n"))
-        syn = [int(l) for l, _ in matches(SYN_ERR, p.stdout)]
-        expect(syn == [2], "missing 'end' must be reported on line 2 (the "
-               "last token), got %s" % syn)
+        for text, line in (("_main\n\treturn;\n\n\n", 2),
+                           ("_main\n\treturn;\n\n% comment\n%more\n", 2),
+                           ("\n\n\n", 1)):
+            p = compiler("--check", scratch("eof", text))
+            syn = [int(l) for l, _ in matches(SYN_ERR, p.stdout)]
+            expect(syn == [line], "end-of-file error for %r must be on line "
+                   "%d (the last real token), got %s" % (text, line, syn))
     suite.add("stress: end-of-file errors use the last token's line",
               eof_error_line)
 

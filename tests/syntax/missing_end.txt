@@ -1,6 +1,9 @@
-% The program stops before 'end'.
+% The program stops before 'end'; the error is reported on the line of the
+% last token, even though comments and blank lines follow it.
 _main
 	type int : b2;
 	b2 <--- 5;
-	return;
-%? syntax-error
+	return; %? syntax-error
+
+
+% trailing comment

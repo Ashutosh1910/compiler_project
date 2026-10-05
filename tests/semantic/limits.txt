@@ -1,6 +1,11 @@
 % Size limits: one record or union at most 1 MiB, locals or parameters
 % of one function at most 4 MiB, a whole call chain at most 6 MiB of stack,
 % expressions at most 1000 operators deep.
+_wide input parameter list [#rq c2, #rq c3, #rq c4, #rq c5, #rq c6]; %? error: the parameters of _wide need more than 4194304 bytes
+	write(1);
+	return;
+end
+
 _take input parameter list [#rq c2, #rq c3, #rq c4];
 	write(1);
 	return;

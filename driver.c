@@ -34,6 +34,12 @@ static int printAst(const char *file) {
   if (ok) {
     c.ast = buildAST(c.grammar, c.tree);
     printAST(c.ast, stdout);
+    if (c.ast->tooDeep) {
+      printf("An expression is nested more than %d operators deep; it was "
+             "truncated above and is a semantic error.\n",
+             MAX_EXPR_DEPTH);
+      ok = 0;
+    }
   }
   freeCompilation(&c);
   return ok;
@@ -143,10 +149,18 @@ int main(int argc, const char **args) {
     do {
       if (!fgets(line, sizeof(line), stdin))
         return 0; // end of input
+      if (!strchr(line, '\n')) { // over-long line: drop the rest of it
+        int ch;
+        while ((ch = getchar()) != '\n' && ch != EOF)
+          ;
+        line[0] = 'x'; // and treat it as a wrong choice
+      }
     } while (line[strspn(line, " \t\r\n")] == '\0'); // skip blank lines
-    n = (int)strtol(line, &end, 10);
-    if (end == line || end[strspn(end, " \t\r\n")] != '\0')
-      n = -1;
+    long choice = strtol(line, &end, 10);
+    n = (end == line || end[strspn(end, " \t\r\n")] != '\0' || choice < 0 ||
+         choice > 8)
+            ? -1
+            : (int)choice;
     switch (n) {
     case 0:
       continue;

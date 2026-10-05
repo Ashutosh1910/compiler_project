@@ -1,2 +1,3 @@
-% Nothing but a comment: a program needs at least _main.
-%? syntax-error
+% Nothing but comments: a program needs at least _main. With no real token %? syntax-error
+% the error is reported on line 1.
+

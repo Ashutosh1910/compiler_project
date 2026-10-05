@@ -164,6 +164,7 @@ typedef struct Function {
 
 typedef struct {
   Function *functions; // in source order; _main is always last
+  int tooDeep;         // an expression exceeded MAX_EXPR_DEPTH (truncated)
 } Program;
 
 // Builds an AST from a parse tree that was produced without syntax errors.
