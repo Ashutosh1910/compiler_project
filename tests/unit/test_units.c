@@ -792,6 +792,42 @@ TEST(test_stack_need) {
   freeCompilation(&c);
 }
 
+TEST(test_grammar_matches) {
+  CHECK(grammarMatches(grammar));
+  // a grammar of another shape (e.g. an older grammar.txt) is refused
+  Grammar *other = loadGrammar(writeSource("<program> ::= TK_MAIN\n"));
+  remove(tmpPath);
+  CHECK(other != NULL);
+  if (other)
+    CHECK(!grammarMatches(other));
+  freeGrammar(other);
+}
+
+TEST(test_stack_recursive_callee) {
+  // one activation of a recursive callee counts in its caller: 4 MiB of
+  // locals plus a recursive function with 2 MiB of locals is too much
+  Compilation c;
+  CHECK(!analyse("_rec input parameter list [int b2];\n"
+                 "  type int[131072] : c2; type int[131072] : c3;\n"
+                 "  call _rec with parameters [b2];\n"
+                 "  return;\n"
+                 "end\n"
+                 "_main\n"
+                 "  type int : d2 : global;\n"
+                 "  type int[131072] : c2; type int[131072] : c3;\n"
+                 "  type int[131072] : c4; type int[131072] : c5;\n"
+                 "  call _rec with parameters [d2];\n"
+                 "  return;\n"
+                 "end\n",
+                 &c));
+  CHECK_EQ_INT(c.semanticErrors, 1);
+  FuncEntry *rec = findFunc(c.symbols, "_rec");
+  CHECK(rec != NULL);
+  if (rec)
+    CHECK_EQ_INT(rec->stackNeed, 16 + 2097152 + 8 * (MAX_EXPR_DEPTH + 2));
+  freeCompilation(&c);
+}
+
 int main(void) {
   grammar = loadGrammar("grammar.txt");
   if (!grammar) {
@@ -827,6 +863,8 @@ int main(void) {
   RUN(test_semantic_error_counts);
   RUN(test_array_types);
   RUN(test_stack_need);
+  RUN(test_grammar_matches);
+  RUN(test_stack_recursive_callee);
 
   freeGrammar(grammar);
   printf("%d checks, %d failures\n", checks, failures);

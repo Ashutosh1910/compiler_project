@@ -15,6 +15,10 @@
   64 // preferring to store known sized(or know max size) strings in stack for
      // faster memory access
 #define MAX_LINE_LEN 1024
+// shape of the grammar.txt this compiler is written for: the AST builder
+// relies on its exact productions, so another grammar file is refused
+#define GRAMMAR_NON_TERMINALS 58
+#define GRAMMAR_RULES 113
 #define STACK_CAP 4096
 typedef enum { SYM_TERMINAL, SYM_NON_TERMINAL } SymbolKind;
 
@@ -34,6 +38,7 @@ typedef struct {
   int numRules;
   char ntNames[MAX_NON_TERMINALS][MAX_SYMBOL_NAME];
   int numNT;
+  int tooLarge; // the file had more symbols or rules than fit (dropped)
 } Grammar;
 
 #define BITSET_WORDS 2

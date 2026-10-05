@@ -824,10 +824,12 @@ void removeComments(const char *filename) {
       }
     } else if (c == '"' || c == '\'') {
       // a % inside a string or character literal is not a comment: copy the
-      // literal verbatim up to its closing quote, or up to the line end
-      int quote = c;
+      // literal verbatim up to its closing quote, or up to the line end.
+      // Like the lexer, a character literal has an escape only right after
+      // its opening quote (a malformed one is skipped up to the next ').
+      int quote = c, first = 1;
       putchar(c);
-      for (;;) {
+      for (;; first = 0) {
         c = fgetc(state.file);
         if (isLineEnd(c)) {
           pending = 1; // the line end is copied by the main loop
@@ -836,7 +838,7 @@ void removeComments(const char *filename) {
         putchar(c);
         if (c == quote)
           break;
-        if (c == '\\') {
+        if (c == '\\' && (quote == '"' || first)) {
           c = fgetc(state.file);
           if (isLineEnd(c)) {
             pending = 1;

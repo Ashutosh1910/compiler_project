@@ -11,21 +11,39 @@
 #include <string.h>
 #include <time.h>
 
-// Use grammar.txt from the current directory, or else the copy next to the
-// executable, so the compiler also works when run from another directory.
+// Use the grammar.txt next to the executable, which belongs to it, or else
+// the one in the current directory. Another directory may well hold an
+// unrelated (for example an older) grammar.txt.
 static char grammarPath[4096];
 static void locateGrammar(const char *argv0) {
-  FILE *f = fopen("grammar.txt", "r");
-  if (f) {
-    fclose(f);
-    return;
-  }
   const char *slash = strrchr(argv0, '/');
   if (!slash)
-    return;
+    return; // found through PATH: only the current directory is known
   snprintf(grammarPath, sizeof(grammarPath), "%.*s/grammar.txt",
            (int)(slash - argv0), argv0);
+  FILE *f = fopen(grammarPath, "r");
+  if (!f)
+    return;
+  fclose(f);
   setGrammarFile(grammarPath);
+}
+
+// The AST builder walks the parse tree by the exact productions of its own
+// grammar, so a different grammar file would crash it: refuse one up front
+// (exit status 2, like bad usage). A missing file is reported where the
+// grammar is loaded.
+static void checkGrammar(void) {
+  Grammar *g = loadGrammar(getGrammarFile());
+  if (!g)
+    return;
+  int ok = grammarMatches(g);
+  freeGrammar(g);
+  if (!ok) {
+    printf("grammar.txt at %s does not match this compiler (expected %d "
+           "non-terminals and %d rules)\n",
+           getGrammarFile(), GRAMMAR_NON_TERMINALS, GRAMMAR_RULES);
+    exit(2);
+  }
 }
 
 static int printAst(const char *file) {
@@ -125,6 +143,7 @@ static int runFlag(int argc, const char **args) {
 int main(int argc, const char **args) {
   int n = 1;
   locateGrammar(args[0]);
+  checkGrammar();
   if (argc >= 2 && strncmp(args[1], "--", 2) == 0)
     return runFlag(argc, args);
   if (argc < 3) {

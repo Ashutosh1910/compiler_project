@@ -38,6 +38,8 @@ void setGrammarFile(const char *path);
 const char *getGrammarFile(void);
 Grammar *loadGrammar(const char *filename);
 void freeGrammar(Grammar *g);
+// 1 if g has the shape of the grammar this compiler was built for
+int grammarMatches(Grammar *g);
 const char *getNTName(Grammar *g, int ntIndex);
 
 // FIRST and FOLLOW computation

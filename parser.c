@@ -127,6 +127,10 @@ int findOrAddNT(Grammar *g, const char *name) {
     if (strcmp(g->ntNames[i], name) == 0)
       return i;
   }
+  if (g->numNT == MAX_NON_TERMINALS) {
+    g->tooLarge = 1;
+    return 0;
+  }
   int idx = g->numNT++;
   strncpy(g->ntNames[idx], name, MAX_SYMBOL_NAME - 1);
   g->ntNames[idx][MAX_SYMBOL_NAME - 1] = '\0';
@@ -152,6 +156,10 @@ Symbol makeSymbol(Grammar *g, const char *tok) {
 }
 
 void addRule(Grammar *g, int lhsNT, Symbol *rhs, int rhsLen) {
+  if (g->numRules == MAX_RULES) {
+    g->tooLarge = 1;
+    return;
+  }
 
   GrammarRule *r = &g->rules[g->numRules];
   r->lhs = lhsNT;
@@ -214,6 +222,8 @@ Grammar *loadGrammar(const char *filename) {
           addRule(g, currentLHS, rhsBuf, rhsLen);
           rhsLen = 0;
         }
+      } else if (rhsLen == MAX_RHS) {
+        g->tooLarge = 1;
       } else {
         rhsBuf[rhsLen++] = makeSymbol(g, token);
       }
@@ -225,6 +235,11 @@ Grammar *loadGrammar(const char *filename) {
   }
   fclose(fp);
   return g;
+}
+
+int grammarMatches(Grammar *g) {
+  return !g->tooLarge && g->numNT == GRAMMAR_NON_TERMINALS &&
+         g->numRules == GRAMMAR_RULES;
 }
 
 void freeGrammar(Grammar *g) {

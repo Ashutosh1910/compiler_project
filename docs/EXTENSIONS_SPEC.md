@@ -225,7 +225,11 @@ table owned by the lexer:
 a comment: when it copies a `"` or `'`, it copies bytes verbatim up to and
 including the matching closing quote, where a backslash copies the following
 byte unconditionally unless that byte is LF, CR or EOF, and the literal also
-ends (without consuming the byte) at LF, CR or EOF.
+ends (without consuming the byte) at LF, CR or EOF. In a character literal
+only the byte right after the opening `'` can start an escape, exactly as in
+the lexer (A.1.3, whose SKIP state ignores backslashes): so for the malformed
+`'ab\'; % gone` the literal ends at the `'` after the backslash and
+`% gone` is removed as a comment.
 
 ---
 
@@ -836,22 +840,31 @@ callee but excluding the callee's own use.
    is reported at f's line when `use(f) > MAX_STACK_USE`, unless some callee
    already exceeds it (existing suppression).
 4. For unbounded f compute
-   `single(f) = 16 + localSize(f) + max(temp(f), max over calls f→g with g bounded of (paramSize(g) + use(g)), max over calls f→g with g unbounded of paramSize(g))`
-   — one activation of f plus the full use of every bounded callee (each
-   unbounded callee is checked on its own and at run time) — and report
+   `single(f) = 16 + localSize(f) + max(temp(f), max over calls f→g with g bounded of (paramSize(g) + use(g)), max over calls f→g with g unbounded of (paramSize(g) + need(g)))`
+   — one activation of f plus the full use of every bounded callee and one
+   activation of every unbounded callee (deeper levels of an unbounded callee
+   are checked on their own and at run time; a chain that cannot complete
+   even one activation of each function is rejected here) — and report
    `<f> needs about <single> bytes of stack for a single call; the limit is 6291456`
    at f's line (the line of its `TK_FUNID`, or of `_main`) when
    `single(f) > MAX_STACK_USE`. Unbounded functions are processed after all
-   bounded ones, so every `use(g)` needed is known. If a bounded callee itself
+   bounded ones, so every `use(g)` needed is known. If a callee itself
    exceeds the limit, this message is still reported for f (the callee has its
-   own message). Example (`tests/semantic/stack_mixed.txt`): `_main` with
+   own message). For a function that calls itself, `need(f)` is counted
+   twice: its own activation and the one it calls. Example (`tests/semantic/stack_mixed.txt`): `_main` with
    three `int[131072]` arrays and two int locals (`localSize` 3145744) that
    calls a recursive `_h` (16-byte block) and a bounded `_g` (16-byte block,
    three `int[131072]` locals, `use(_g)` = 16 + 3145728 + 8016 = 3153760)
    gives
    `_main needs about 6299536 bytes of stack for a single call; the limit is 6291456`
-   (`16 + 3145744 + 16 + 3153760`), although each function alone is within
-   the limits.
+   (`16 + 3145744 + 16 + 3153760`; the call of `_h` needs only
+   `16 + need(_h)` = 16 + 8032), although each function alone is within
+   the limits. Second example: `_main` with four `int[131072]` locals
+   (`localSize` 4194304) calling a recursive `_rec` (16-byte block, two
+   `int[131072]` locals, `need(_rec)` = 16 + 2097152 + 8016 = 2105184) gives
+   `_main needs about 6299520 bytes of stack for a single call; the limit is 6291456`
+   (`16 + 4194304 + 16 + 2105184`): the first call of `_rec` could never
+   complete.
 
 For every currently valid program the call graph is acyclic and every
 function is bounded, so the results are identical to today.
@@ -1084,7 +1097,7 @@ submission document and is not updated.
 | global arrays | each at most 1 MiB, no total limit (unchanged rule for globals) |
 | print items per statement | unlimited (`<morePrintItems>` is tail-recursive; the parser stack does not grow) |
 | expression depth | 1000 per expression root; an index level counts 1 |
-| stack | 6 MiB: statically, `use(f)` for every non-recursive chain and `single(f)` (one activation plus its non-recursive callees' full use) for functions in or above a recursive cycle (A.8.2); at run time, the stack guard at every function entry (A.8.3) |
+| stack | 6 MiB: statically, `use(f)` for every non-recursive chain and `single(f)` (one activation plus its non-recursive callees' full use and one activation of each recursive callee) for functions in or above a recursive cycle (A.8.2); at run time, the stack guard at every function entry (A.8.3) |
 | recursion depth | only the runtime stack guard |
 | exit status | value mod 256 |
 
@@ -1120,23 +1133,28 @@ Lexical (`[LEXER-ERROR] at line N: ...`):
 | `byte \x<HH> not allowed in string literal` | non-printable byte other than LF/CR (tab included) in a string |
 | `string literal longer than 255 characters` | more than 255 decoded bytes |
 
-Semantic (`[SEMANTIC-ERROR] at line N: ...`; N is the line of the
-statement/declaration, as for existing messages; the stack messages use the
-function's line):
+Semantic (`[SEMANTIC-ERROR] at line N: ...`). N depends on the message, as
+for the existing ones: "token line" is the line of the named variable or
+array (like `variable <name> is not declared`), "statement line" the line of
+the statement's first token (the keyword of `read`, `write`, `readchar`,
+`writechar`, `print`, `exit`, `if`, `while`, `return`; `call` for a call
+statement; the target's name for an assignment):
 
-| Message |
-|---|
-| `array length must be between 1 and 131072, not <lexeme>` |
-| `array element type must be int or real, not <type>` |
-| `<name> is not an array (it has type <type>)` |
-| `array index must be an int expression, not <type>` |
-| `array <name> cannot be used without an index` |
-| `array <name> cannot be passed to or returned from a function` |
-| `readchar needs an int variable, not <path> of type <type>` |
-| `writechar needs an int value, not <type>` |
-| `print needs int or real values, not <type>` |
-| `exit needs an int value, not <type>` |
-| `<f> needs about <n> bytes of stack for a single call; the limit is 6291456` |
+| Message | N |
+|---|---|
+| `array length must be between 1 and 131072, not <lexeme>` | line of the declared variable's name |
+| `array element type must be int or real, not <type>` | line of the declared variable's name |
+| `<name> is not an array (it has type <type>)` | token line (the array name of the access) |
+| `array index must be an int expression, not <type>` | token line (the array name of the access) |
+| `array <name> cannot be used without an index` | token line inside an expression (operands, conditions, print items, indices, arguments of `writechar`/`exit`); statement line as an assignment target or the argument of `read`, `write`, `readchar` |
+| `array <name> cannot be passed to or returned from a function` | statement line of the call, or of `return` |
+| `readchar needs an int variable, not <path> of type <type>` | statement line |
+| `writechar needs an int value, not <type>` | statement line |
+| `print needs int or real values, not <type>` | statement line |
+| `exit needs an int value, not <type>` | statement line |
+| `<f> needs about <n> bytes of stack for a single call; the limit is 6291456` | the function's line (its `TK_FUNID`, or `_main`) |
+
+The depth message of A.10 uses the statement line.
 
 Runtime (stdout, then exit status 1):
 
@@ -2338,9 +2356,9 @@ end
 **`tests/semantic/stack_recursive.txt`**
 
 ```text
-% One activation of a recursive function must fit in the 6 MiB stack limit:
-% 4 MiB of local arrays plus a 3 MiB parameter block for the recursive call.
-_big input parameter list [#rq c2, #rq c3, #rq c4] %? error: _big needs about 7340064 bytes of stack for a single call; the limit is 6291456
+% A recursive function must fit one activation plus one activation of its
+% recursive callee (here itself) in the 6 MiB stack limit: 2 x 7340064 bytes.
+_big input parameter list [#rq c2, #rq c3, #rq c4] %? error: _big needs about 14680128 bytes of stack for a single call; the limit is 6291456
 output parameter list [int b2];
 	type int[131072] : d2;
 	type int[131072] : d3;

@@ -777,6 +777,11 @@ static void checkCall(Stmt *s) {
   }
   if (!callee)
     return;
+  // In a second definition of a function, a call of its own name resolves
+  // to the first definition; comparing against that signature would only
+  // add misleading errors to the duplicate-definition error.
+  if (callee != cur && strcmp(callee->name, cur->name) == 0)
+    return;
 
   if (s->ins.count != callee->numInputs) {
     semError(s->line,
@@ -1078,7 +1083,9 @@ static long long tempStack(Stmt *s) {
 //   use(f)    = 16 + locals + max(temporaries, paramSize(g) + use(g) over the
 //               callees g): the deepest chain below a non-recursive f
 //   single(f) = the same for a function that is in or above a cycle, where
-//               a callee g that is also unbounded counts only paramSize(g)
+//               a callee g that is also unbounded counts paramSize(g) +
+//               need(g): one activation of it, so a chain that cannot
+//               complete even one activation of every function is rejected
 // use and single are limited to MAX_STACK_USE; the generated code checks
 // the actual depth at every function entry against need (codegen.c).
 
@@ -1107,7 +1114,8 @@ typedef struct {
   long long temp; // temporaries, or the returned outputs if they need more
   int visit, low, onStack; // Tarjan's bookkeeping (visit < 0: not yet)
   int recursive, unbounded;
-  long long use; // bounded functions only
+  long long need; // one activation by itself
+  long long use;  // bounded functions only
 } StackInfo;
 
 static StackInfo *info;
@@ -1167,6 +1175,7 @@ static void checkStackUse(void) {
         block = info[i].callees.items[k]->paramSize;
     long long need = 16 + f->localSize + (block > info[i].temp ? block
                                                               : info[i].temp);
+    info[i].need = need;
     f->stackNeed = need > MAX_STACK_USE ? MAX_STACK_USE : (int)need;
   }
   for (int i = 0; i < n; i++)
@@ -1194,7 +1203,9 @@ static void checkStackUse(void) {
       for (int i = 0; i < f->callees.n; i++) {
         FuncEntry *g = f->callees.items[i];
         long long below = g->paramSize;
-        if (!info[g->index].unbounded) {
+        if (info[g->index].unbounded) {
+          below += info[g->index].need; // checked on its own, and at run time
+        } else {
           below += info[g->index].use;
           if (info[g->index].use > MAX_STACK_USE)
             calleeTooBig = 1;
@@ -1212,8 +1223,9 @@ static void checkStackUse(void) {
                    "functions it calls; the limit is %d",
                    fe->name, use, MAX_STACK_USE);
       } else if (use > MAX_STACK_USE) {
-        // reported even when a bounded callee is too big itself: that
-        // callee has its own message, this is about one activation of fe
+        // reported even when a callee is too big itself: that callee has
+        // its own message, this is about one activation of fe and of what
+        // it calls
         semError(fe->line,
                  "%s needs about %lld bytes of stack for a single call; the "
                  "limit is %d",
