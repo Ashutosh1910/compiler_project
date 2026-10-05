@@ -3262,9 +3262,11 @@ that file as given in C.3):
 
 * `driver: option 1 keeps % inside literals` — run the menu
   (`./compiler tests/programs/print_percent.txt <out>` with stdin `"1\n0\n"`)
-  and check that stdout contains `\tprint(b2, "% %d %s %%\n"); \n` (the
-  string intact, the trailing comment removed, the space before it kept) and
-  `\twritechar('%');\n`, and contains neither `trailing comment` nor
+  and check that stdout contains the Python string
+  `'\tprint(b2, "% %d %s %%\\n"); \n'` (a TAB, the string intact with its
+  backslash-n kept as the two source characters, the trailing comment
+  removed, the space before it kept, then LF) and the Python string
+  `"\twritechar('%');\n"`, and contains neither `trailing comment` nor
   `A % inside`.
 
 The existing driver tests (`--ast prints every construct`,
@@ -3352,7 +3354,7 @@ $
 
 **`tests/toy/err_byte_200.tl`**
 
-This file has , so it is given as the Python code that creates it:
+This file has a byte >= 0x80 (0xC8), so it is given as the Python code that creates it:
 
 ```python
 open("tests/toy/err_byte_200.tl", "wb").write(
