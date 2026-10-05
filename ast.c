@@ -174,11 +174,14 @@ static Expr *newBinop(TreeNode *opNode, Expr *l, Expr *r) {
 static void freeExpr(Expr *e);
 
 // Folds one more operator onto acc. Past MAX_EXPR_DEPTH the operand is
-// dropped instead: the expression is rejected anyway, and this keeps every
-// recursive pass over the tree shallow.
+// dropped instead, which keeps every recursive pass over the tree shallow.
+// The result stays marked as too deep (and the mark travels up through
+// enclosing parentheses), so semantic analysis always rejects the statement
+// and the truncated tree is never compiled.
 static Expr *fold(TreeNode *opNode, Expr *acc, Expr *operand) {
   if (acc->depth > MAX_EXPR_DEPTH || operand->depth > MAX_EXPR_DEPTH) {
     freeExpr(operand);
+    acc->depth = MAX_EXPR_DEPTH + 1;
     return acc;
   }
   return newBinop(opNode, acc, operand);

@@ -331,7 +331,9 @@ static VarEntry *declareInFunction(FuncEntry *f, Decl *d, VarKind kind) {
   if (g) {
     semError(d->line, "%s is already declared as a global variable at line %d",
              d->name, g->line);
-    return NULL;
+    // still declare it locally, with the error type, so that its uses in
+    // this function are silent instead of resolving to the global
+    t = st->errorType;
   }
   VarEntry *old = findLocal(f, d->name);
   if (old) {

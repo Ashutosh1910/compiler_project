@@ -1,9 +1,12 @@
 % Globals are visible in every function, even ones defined before the
 % declaration, so no parameter or local anywhere may reuse their names.
-_f input parameter list [int b5] %? error: b5 is already declared as a global variable at line 11
+_f input parameter list [int b5] %? error: b5 is already declared as a global variable at line 14
 output parameter list [int b3];
-	type int : c5; %? error: c5 is already declared as a global variable at line 12
+	type int : c5; %? error: c5 is already declared as a global variable at line 15
 	b3 <--- 1;
+	% the clashing names are still declared here (with an error type), so
+	% using them reports nothing more
+	c5 <--- b5 + 2.50;
 	return [b3];
 end
 
