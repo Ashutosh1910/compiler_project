@@ -61,27 +61,53 @@ static FuncEntry *cur; // function whose body is being checked
 static char (*undeclared)[AST_NAME_LEN];
 static int numUndeclared, capUndeclared;
 
+// A piece of a variable: bytes [offset, offset + size) of `var`. Writing
+// d2.x and reading d2.y touch different pieces of the same variable.
 typedef struct {
-  VarEntry **items;
-  int n, cap;
-} VarSet;
+  VarEntry *var;
+  int offset, size;
+} Access;
 
-static void setAdd(VarSet *s, VarEntry *v) {
+typedef struct {
+  Access *items;
+  int n, cap;
+} AccessSet;
+
+static void setAdd(AccessSet *s, VarEntry *v, int offset, int size) {
   if (!v)
     return;
-  for (int i = 0; i < s->n; i++)
-    if (s->items[i] == v)
-      return;
   if (s->n == s->cap) {
     s->cap = s->cap ? s->cap * 2 : 8;
-    s->items = realloc(s->items, sizeof(VarEntry *) * s->cap);
+    s->items = realloc(s->items, sizeof(Access) * s->cap);
   }
-  s->items[s->n++] = v;
+  s->items[s->n++] = (Access){v, offset, size};
 }
 
-static int setHas(VarSet *s, VarEntry *v) {
+static void setAddRef(AccessSet *s, AstVarRef *r) {
+  if (r->entry)
+    setAdd(s, r->entry, r->offset, r->type ? r->type->size : 0);
+}
+
+static void setAddWhole(AccessSet *s, VarEntry *v) {
+  if (v)
+    setAdd(s, v, 0, v->type->size);
+}
+
+// does any access in s overlap a?
+static int setOverlaps(AccessSet *s, Access *a) {
+  for (int i = 0; i < s->n; i++) {
+    Access *b = &s->items[i];
+    if (b->var == a->var && b->offset < a->offset + a->size &&
+        a->offset < b->offset + b->size)
+      return 1;
+  }
+  return 0;
+}
+
+// does s write any part of v?
+static int setTouches(AccessSet *s, VarEntry *v) {
   for (int i = 0; i < s->n; i++)
-    if (s->items[i] == v)
+    if (s->items[i].var == v)
       return 1;
   return 0;
 }
@@ -171,7 +197,8 @@ static void layoutType(Type *t) {
     count++;
   t->fields = calloc(count, sizeof(FieldInfo));
 
-  int offset = 0, size = 0;
+  long long offset = 0, size = 0; // wide enough not to overflow before the
+                                  // MAX_TYPE_SIZE check below
   for (FieldDef *fd = t->def->fields; fd; fd = fd->next) {
     if (findField(t, fd->name)) {
       semError(fd->line, "duplicate field %s in %s", fd->name, t->name);
@@ -203,7 +230,7 @@ static void layoutType(Type *t) {
     fi->type = ft;
     fi->line = fd->line;
     if (t->kind == TY_RECORD) {
-      fi->offset = offset;
+      fi->offset = offset > MAX_TYPE_SIZE ? MAX_TYPE_SIZE : (int)offset;
       offset += ft->size;
       size = offset;
     } else {
@@ -216,7 +243,12 @@ static void layoutType(Type *t) {
   }
   if (t->kind == TY_UNION)
     t->hasUnion = 1;
-  t->size = size;
+  if (size > MAX_TYPE_SIZE) {
+    semError(t->line, "type %s is too large (%lld bytes; the limit is %d)",
+             t->name, size, MAX_TYPE_SIZE);
+    size = SCALAR_SIZE; // keeps types that contain it from overflowing too
+  }
+  t->size = (int)size;
   t->layoutState = 2;
 }
 
@@ -321,10 +353,16 @@ static void collectParams(FuncEntry *fe, Decl *list, VarKind kind,
     // signature when calls are checked
     VarEntry *v = declareInFunction(fe, d, kind);
     (*arr)[(*count)++] = v;
-    if (v) {
-      v->offset = *offset;
-      *offset += v->type->size;
+    if (!v)
+      continue;
+    if (*offset + v->type->size > MAX_FRAME_SIZE) {
+      semError(d->line, "the parameters of %s need more than %d bytes",
+               fe->name, MAX_FRAME_SIZE);
+      v->type = st->errorType; // stop counting, report once
+      continue;
     }
+    v->offset = *offset;
+    *offset += v->type->size;
   }
 }
 
@@ -346,15 +384,24 @@ static void collectFunctions(Program *p) {
                   &offset);
     fe->paramSize = round16(offset);
 
-    int local = 0;
+    int local = 0, tooBig = 0;
     for (Decl *d = f->decls; d; d = d->next) {
       if (d->isGlobal)
         continue;
       VarEntry *v = declareInFunction(fe, d, VAR_LOCAL);
-      if (v) {
-        local += v->type->size;
-        v->offset = local;
+      if (!v)
+        continue;
+      if (local + v->type->size > MAX_FRAME_SIZE) {
+        if (!tooBig)
+          semError(d->line, "the local variables of %s need more than %d "
+                            "bytes",
+                   fe->name, MAX_FRAME_SIZE);
+        tooBig = 1;
+        v->type = st->errorType;
+        continue;
       }
+      local += v->type->size;
+      v->offset = local;
     }
     fe->localSize = round16(local);
   }
@@ -583,8 +630,13 @@ static void checkCall(Stmt *s) {
 
   for (int i = 0; i < s->ins.count; i++)
     checkId(&s->ins.ids[i]);
-  for (int i = 0; i < s->outs.count; i++)
-    checkId(&s->outs.ids[i]);
+  for (int i = 0; i < s->outs.count; i++) {
+    VarEntry *v = checkId(&s->outs.ids[i]);
+    for (int j = 0; v && j < i; j++)
+      if (s->outs.ids[j].entry == v)
+        semError(s->line, "%s receives more than one result of %s",
+                 v->name, s->funName);
+  }
   if (!callee)
     return;
 
@@ -622,20 +674,20 @@ static void checkCall(Stmt *s) {
   }
 }
 
-// every root variable that a statement list may change
-static void collectAssigned(Stmt *s, VarSet *set) {
+// every piece of a variable that a statement list may change
+static void collectAssigned(Stmt *s, AccessSet *set) {
   for (; s; s = s->next) {
     switch (s->kind) {
     case STMT_ASSIGN:
-      setAdd(set, s->lhs.entry);
+      setAddRef(set, &s->lhs);
       break;
     case STMT_READ:
       if (s->ioArg->kind == EXPR_VAR)
-        setAdd(set, s->ioArg->var.entry);
+        setAddRef(set, &s->ioArg->var);
       break;
     case STMT_CALL:
       for (int i = 0; i < s->outs.count; i++)
-        setAdd(set, s->outs.ids[i].entry);
+        setAddWhole(set, s->outs.ids[i].entry);
       break;
     case STMT_WHILE:
     case STMT_IF:
@@ -648,14 +700,14 @@ static void collectAssigned(Stmt *s, VarSet *set) {
   }
 }
 
-static void collectCondVars(BoolExpr *b, VarSet *set) {
+static void collectCondVars(BoolExpr *b, AccessSet *set) {
   if (!b)
     return;
   if (b->kind == BOOL_REL) {
     if (b->lhs->kind == EXPR_VAR)
-      setAdd(set, b->lhs->var.entry);
+      setAddRef(set, &b->lhs->var);
     if (b->rhs->kind == EXPR_VAR)
-      setAdd(set, b->rhs->var.entry);
+      setAddRef(set, &b->rhs->var);
     return;
   }
   collectCondVars(b->left, set);
@@ -666,8 +718,8 @@ static int condHasUndeclared(BoolExpr *b) {
   if (!b)
     return 0;
   if (b->kind == BOOL_REL)
-    return (b->lhs->kind == EXPR_VAR && !b->lhs->var.entry) ||
-           (b->rhs->kind == EXPR_VAR && !b->rhs->var.entry);
+    return (b->lhs->kind == EXPR_VAR && !b->lhs->var.type) ||
+           (b->rhs->kind == EXPR_VAR && !b->rhs->var.type);
   return condHasUndeclared(b->left) || condHasUndeclared(b->right);
 }
 
@@ -678,7 +730,13 @@ static void checkStmt(Stmt *s) {
   switch (s->kind) {
   case STMT_ASSIGN: {
     Type *lt = checkVarRef(&s->lhs);
-    Type *rt = checkExpr(s->rhs);
+    Type *rt = st->errorType;
+    if (s->rhs->depth > MAX_EXPR_DEPTH)
+      semError(s->line, "expression is too long or too deeply nested (more "
+                        "than %d operators deep)",
+               MAX_EXPR_DEPTH);
+    else
+      rt = checkExpr(s->rhs);
     varText(&s->lhs, buf, sizeof(buf));
     if (lt->kind == TY_UNION) {
       semError(s->line, "cannot assign to union %s; assign one of its fields",
@@ -722,15 +780,16 @@ static void checkStmt(Stmt *s) {
     checkBool(s->cond);
     checkStmts(s->body);
     // The loop can only terminate if the body changes something the
-    // condition reads. Skipped when an operand is undeclared (already
-    // reported).
+    // condition reads: the same variable, and for a record field an
+    // overlapping part of it (writing d2.x does not update d2.y). Skipped
+    // when an operand failed to resolve (already reported).
     if (!condHasUndeclared(s->cond)) {
-      VarSet condVars = {0}, changed = {0};
+      AccessSet condVars = {0}, changed = {0};
       collectCondVars(s->cond, &condVars);
       collectAssigned(s->body, &changed);
       int updated = 0;
       for (int i = 0; i < condVars.n; i++)
-        if (setHas(&changed, condVars.items[i]))
+        if (setOverlaps(&changed, &condVars.items[i]))
           updated = 1;
       if (!updated)
         semError(s->line, "none of the variables in the while condition is "
@@ -766,7 +825,7 @@ static void checkReturn(FuncEntry *fe) {
     return;
   }
 
-  VarSet assigned = {0};
+  AccessSet assigned = {0};
   collectAssigned(f->stmts, &assigned);
   for (int i = 0; i < f->returns.count; i++) {
     VarEntry *v = f->returns.ids[i].entry, *formal = fe->outputs[i];
@@ -779,7 +838,7 @@ static void checkReturn(FuncEntry *fe) {
                "has type %s",
                v->name, v->type->name, formal->name, formal->type->name);
     if ((v->kind == VAR_OUTPUT || v->kind == VAR_LOCAL) &&
-        !setHas(&assigned, v))
+        !setTouches(&assigned, v))
       semError(f->returnLine,
                "%s is returned by %s but is never assigned a value", v->name,
                fe->name);

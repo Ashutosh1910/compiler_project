@@ -1,0 +1,30 @@
+% Copying one union member onto an overlapping member reads every source
+% value before writing any (like memmove).
+%? stdout: 1.00 1.00 2.00
+%? stdout: 1.00 2.00
+_main
+	record #line
+		type real : x;
+		type real : y;
+	endrecord
+	record #big
+		type real : z;
+		type #line : l;
+	endrecord
+	union #u
+		type #line : ln;
+		type #big : bg;
+	endunion
+	record #v
+		type int : tag;
+		type #u : s;
+	endrecord
+	type #v : d2;
+	d2.s.ln.x <--- 1.00;
+	d2.s.ln.y <--- 2.00;
+	d2.s.bg.l <--- d2.s.ln;
+	write(d2.s.bg);
+	d2.s.ln <--- d2.s.bg.l;
+	write(d2.s.ln);
+	return;
+end

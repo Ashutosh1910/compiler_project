@@ -52,6 +52,7 @@ typedef struct Expr {
   AstVarRef var;           // EXPR_VAR
   TokenType op;            // EXPR_BINOP: TK_PLUS / TK_MINUS / TK_MUL / TK_DIV
   struct Expr *left, *right;
+  int depth;         // operators on the longest path to a leaf
   struct Type *type; // filled in by semantic analysis
 } Expr;
 

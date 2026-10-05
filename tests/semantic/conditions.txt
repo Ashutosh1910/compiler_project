@@ -39,8 +39,20 @@ _main
 			b2 <--- b2 + 2;
 		endif
 	endwhile
-	while (d2.x < 5.00)
+	while (d2.x < 5.00) %? error: none of the variables in the while condition is updated
 		d2.y <--- 1.00;
+	endwhile
+	while (d2.x < 5.00)
+		d2.x <--- d2.x + 1.00;
+	endwhile
+	while (d2.y < 5.00)
+		read(d2);
+	endwhile
+	while ((d2.x < 5.00) &&& (b2 > 0))
+		d2 <--- d2 * 2;
+	endwhile
+	while (d2.z < 5.00) %? error: d2 (type #pt) has no field named z
+		write(b2);
 	endwhile
 	while (b2 < 10) %? error: none of the variables in the while condition is updated
 		while (c2 < 1.00)

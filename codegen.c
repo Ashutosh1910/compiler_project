@@ -25,6 +25,7 @@
 // 16-byte aligned at every call, as the System V ABI requires for printf.
 #include "codegen.h"
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 
 static FILE *out;
@@ -96,15 +97,24 @@ static int countLeaves(Type *t) {
   return n;
 }
 
+// Every qword is pushed before any is stored, so the copy is correct even
+// when source and destination overlap (two members of one union).
 static void copyBytes(const char *what, int size, VarEntry *src, int srcOff,
                       VarEntry *dst, int dstOff) {
   if (src == dst && srcOff == dstOff)
     return;
   emit("; copy %s (%d bytes)", what, size);
-  for (int k = 0; k < size; k += SCALAR_SIZE) {
-    emit("mov rax, qword %s", addr(src, srcOff + k));
-    emit("mov qword %s, rax", addr(dst, dstOff + k));
-  }
+  for (int k = 0; k < size; k += SCALAR_SIZE)
+    emit("push qword %s", addr(src, srcOff + k));
+  for (int k = size - SCALAR_SIZE; k >= 0; k -= SCALAR_SIZE)
+    emit("pop qword %s", addr(dst, dstOff + k));
+}
+
+static Leaf *leavesOf(Type *t, int *n) {
+  *n = countLeaves(t);
+  Leaf *leaves = malloc(sizeof(Leaf) * (*n > 0 ? *n : 1));
+  collectLeaves(t, 0, leaves, 0);
+  return leaves;
 }
 
 /* ------------------------------------------------------------ expressions */
@@ -351,9 +361,8 @@ static void genAssign(Stmt *s) {
   } else {
     // Compute every field before storing any of them, so that
     // r <--- r / r.n still divides every field by the old r.n.
-    int n = countLeaves(t);
-    Leaf leaves[n > 0 ? n : 1];
-    collectLeaves(t, 0, leaves, 0);
+    int n;
+    Leaf *leaves = leavesOf(t, &n);
     for (int i = 0; i < n; i++) {
       genLeaf(s->rhs, leaves[i].offset, leaves[i].kind);
       if (leaves[i].kind == TY_REAL)
@@ -364,6 +373,7 @@ static void genAssign(Stmt *s) {
       emit("pop rax");
       emit("mov qword %s, rax", varAddr(&s->lhs, leaves[i].offset));
     }
+    free(leaves);
   }
 }
 
@@ -375,9 +385,8 @@ static void callPrintf(const char *fmt, int isReal) {
 
 static void genRead(Stmt *s) {
   AstVarRef *v = &s->ioArg->var;
-  int n = countLeaves(v->type);
-  Leaf leaves[n > 0 ? n : 1];
-  collectLeaves(v->type, 0, leaves, 0);
+  int n;
+  Leaf *leaves = leavesOf(v->type, &n);
   for (int i = 0; i < n; i++) {
     emit("lea rsi, %s", varAddr(v, leaves[i].offset));
     emit("lea rdi, [rel %s]",
@@ -385,6 +394,7 @@ static void genRead(Stmt *s) {
     emit("xor eax, eax");
     emit("call scanf wrt ..plt");
   }
+  free(leaves);
 }
 
 static void genWrite(Stmt *s) {
@@ -400,9 +410,8 @@ static void genWrite(Stmt *s) {
     return;
   }
   // a record prints its scalar leaves on one line, separated by spaces
-  int n = countLeaves(e->var.type);
-  Leaf leaves[n > 0 ? n : 1];
-  collectLeaves(e->var.type, 0, leaves, 0);
+  int n;
+  Leaf *leaves = leavesOf(e->var.type, &n);
   for (int i = 0; i < n; i++) {
     int last = i == n - 1;
     if (leaves[i].kind == TY_INT) {
@@ -413,6 +422,7 @@ static void genWrite(Stmt *s) {
       callPrintf(last ? "fmt_real_nl" : "fmt_real_sp", 1);
     }
   }
+  free(leaves);
 }
 
 static void genCall(Stmt *s) {
@@ -508,10 +518,20 @@ static void genFunction(FuncEntry *f) {
 
   genStmts(f->ast->stmts);
 
+  // The return list is a parallel assignment to the output slots:
+  // return [b2, b3] with b3 itself an output must copy b3's old value, so
+  // every value is pushed before any slot is written.
   fprintf(out, "    ; line %d: return\n", f->ast->returnLine);
-  for (int i = 0; i < f->ast->returns.count; i++) {
-    VarEntry *v = f->ast->returns.ids[i].entry, *formal = f->outputs[i];
-    copyBytes(v->name, formal->type->size, v, 0, formal, 0);
+  IdList *ret = &f->ast->returns;
+  for (int i = 0; i < ret->count; i++) {
+    VarEntry *v = ret->ids[i].entry;
+    for (int k = 0; k < v->type->size; k += SCALAR_SIZE)
+      emit("push qword %s", addr(v, k));
+  }
+  for (int i = ret->count - 1; i >= 0; i--) {
+    VarEntry *formal = f->outputs[i];
+    for (int k = formal->type->size - SCALAR_SIZE; k >= 0; k -= SCALAR_SIZE)
+      emit("pop qword %s", addr(formal, k));
   }
   if (f->isMain)
     emit("xor eax, eax");

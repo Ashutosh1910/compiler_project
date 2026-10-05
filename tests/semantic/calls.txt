@@ -6,6 +6,13 @@ output parameter list [int b3, real c3];
 	return [b3, c3];
 end
 
+_ints input parameter list [int b2]
+output parameter list [int b3, int b4];
+	b3 <--- b2;
+	b4 <--- b2;
+	return [b3, b4];
+end
+
 _none input parameter list [int b2];
 	write(b2);
 	return;
@@ -23,6 +30,8 @@ _main
 	[b6] <--- call _two with parameters [b5, c5]; %? error: function _two returns 2 value(s), but 1 variable(s) receive them
 	[c6, b6] <--- call _two with parameters [b5, c5]; %? error: output parameter 1 of _two has type int, but c6 has type real %? error: output parameter 2 of _two has type real, but b6 has type int
 	call _none with parameters [b5];
+	[b6, b6] <--- call _ints with parameters [b5]; %? error: b6 receives more than one result of _ints
+	[b5, b6] <--- call _ints with parameters [b5];
 	[b6] <--- call _none with parameters [b5]; %? error: function _none returns 0 value(s), but 1 variable(s) receive them
 	call _two with parameters [b5, c5]; %? error: function _two returns 2 value(s), but 0 variable(s) receive them
 	call _nothere with parameters [b5]; %? error: function _nothere is not defined

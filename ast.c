@@ -167,6 +167,7 @@ static Expr *newBinop(TreeNode *opNode, Expr *l, Expr *r) {
   e->op = (TokenType)opTok->sym.id;
   e->left = l;
   e->right = r;
+  e->depth = 1 + (l->depth > r->depth ? l->depth : r->depth);
   return e;
 }
 
