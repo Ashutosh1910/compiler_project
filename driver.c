@@ -149,11 +149,15 @@ int main(int argc, const char **args) {
     do {
       if (!fgets(line, sizeof(line), stdin))
         return 0; // end of input
-      if (!strchr(line, '\n')) { // over-long line: drop the rest of it
-        int ch;
-        while ((ch = getchar()) != '\n' && ch != EOF)
-          ;
-        line[0] = 'x'; // and treat it as a wrong choice
+      if (!strchr(line, '\n')) {
+        // either the last line of input (no newline) or an over-long line;
+        // only the latter continues, and is then one wrong choice
+        int ch = getchar();
+        if (ch != '\n' && ch != EOF) {
+          while ((ch = getchar()) != '\n' && ch != EOF)
+            ;
+          line[0] = 'x';
+        }
       }
     } while (line[strspn(line, " \t\r\n")] == '\0'); // skip blank lines
     long choice = strtol(line, &end, 10);

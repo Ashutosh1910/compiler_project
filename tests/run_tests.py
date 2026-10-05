@@ -900,6 +900,14 @@ def add_driver_tests(suite):
                      stdin="4294967303\n4294967296\n" + "7" * 100 + "\n0\n")
         expect(p.stdout.count("wrong choice") == 3 and
                "compiles successfully" not in p.stdout, p.stdout[-800:])
+        # a last choice without a trailing newline still counts, and so does
+        # a choice padded to exactly fill the input buffer
+        for stdin in ("7", " " * 61 + "7\n0\n"):
+            p = compiler(src, os.path.join(BUILD, "src", "m.out"),
+                         stdin=stdin)
+            expect("compiles successfully" in p.stdout and
+                   "wrong choice" not in p.stdout,
+                   "%r: %s" % (stdin[-8:], p.stdout[-500:]))
     suite.add("driver: menu choices are whole lines", menu_reads_lines)
 
     def other_directory():
