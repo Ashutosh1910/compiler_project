@@ -1,0 +1,728 @@
+% =========================================================================
+% toycc -- a compiler for the toy language TL, written in the extended
+% course language (docs/EXTENSIONS_SPEC.md, Part B).
+%
+%   build:  ./compiler --build toy/toycc.txt toycc
+%   use:    ./toycc < prog.tl > prog.asm
+%           nasm -f elf64 prog.asm -o prog.o && gcc -no-pie prog.o -o prog
+%
+% TL in one paragraph: a program is a list of statements over 64-bit integer
+% variables (all global, all starting at 0):
+%     NAME = expr;   print expr;   while cond { ... }   if cond { ... } else { ... }
+% with + - * / (wrapping, division truncates toward zero), unary minus,
+% parentheses and the six comparisons == != < <= > >=.  '#' starts a comment.
+%
+% ARCHITECTURE: a classic one-pass compiler in three layers.
+%
+%   1. Lexer (_advance, _class, _next, _number, _name, _intern, _operator).
+%      _advance reads the source byte by byte with readchar into the
+%      lookahead byte d2 (-1 at end of input) and counts lines in d3.
+%      _next skips blanks and comments and scans ONE token into d4 (its
+%      kind), d5 (value of a number), d7 (name-table index of a name) and d6
+%      (its line).  The parser therefore sees exactly one token of lookahead,
+%      and the token after token k is scanned exactly when token k is
+%      consumed, as the error rules of TL require (spec B.4).
+%
+%   2. Recursive-descent parser (_stmt, _block, _cond, _expr, _term, _unary,
+%      _primary).  There is one function per grammar rule; each one consumes
+%      exactly the tokens of its rule.  Recursion (an expression inside
+%      parentheses, a block inside a block) is plain recursion of these
+%      functions, possibly through functions defined later in the file.
+%
+%   3. Direct assembly emission.  There is no syntax tree: every parsing
+%      function prints its x86-64 NASM code as soon as it has recognised a
+%      construct.  An expression leaves its value in rax; the left operand of
+%      a binary operator waits on the machine stack (push rax ... pop rax)
+%      while the right operand is computed.  Every line of assembly is
+%      written by a single print whose last item ends in "\n", so if an error
+%      stops the compiler halfway the error message still starts a new line.
+%
+% SYMBOL TABLE: every distinct name is stored once in a name table (bytes in
+% d2b, start and length of entry k in d2c[k], d2d[k]).  Entries 0..3 are the
+% keywords while, if, else, print, so the lexer recognises keywords by simply
+% looking the name up.  Variable k (k >= 4) lives in the .bss quadword V<k>.
+% d3b[k] becomes 1 once an assignment to name k has been parsed completely;
+% using a name in an expression before that is "undefined variable".
+%
+% LABELS: _newlabel hands out L0, L1, L2, ... for loops and ifs.  A condition
+% is compiled as "compare, then jump to the false label with the INVERSE
+% jump" (for < that is jge), so the true case simply falls through.
+%
+% ERRORS: _fail prints "error: <line>: <message>" and exits with status 1.
+% The first error stops everything (spec B.4).
+%
+% LIMITS (spec B.5): 500 variable names with 8000 bytes of names in total,
+% plus the four keywords (16 bytes): hence the tables of 504 entries and
+% 8016 bytes.  Nesting depth 200 is just recursion depth here.
+%
+% RULES OF THE IMPLEMENTATION LANGUAGE that shape this code:
+%   * variable names must match [b-d][2-7][b-d]*[2-7]*, hence the table below;
+%     globals start with d, locals with b, so they never clash;
+%   * every function needs an input parameter: b2 is a dummy where none is
+%     needed;
+%   * conditions compare variables, literals or array elements only (no
+%     arithmetic), so classifying a byte is done by the function _class;
+%   * a while body must update a variable of its condition; a call statement
+%     counts as updating every global (spec A.9), which is what loops over
+%     the token kind d4 or the lookahead byte d2 rely on.
+%
+% ------------------------------------------------------------------------
+% GLOBAL VARIABLES (declared in _main)
+%   d2    lookahead byte: the next unread source byte, -1 at end of input
+%   d3    line number of the lookahead byte (1 + number of LFs before it)
+%   d4    kind of the current token:
+%            '0' integer literal      'a' name of a variable   '$' end of input
+%            '+' '-' '*' '/' '(' ')' '{' '}' ';' '=' '<' '>'   themselves
+%            'E' ==    'N' !=    'L' <=    'G' >=
+%            'w' while 'i' if    'e' else  'p' print
+%   d5    value of the current integer literal
+%   d6    line of the current token (the line every error message reports)
+%   d7    name-table index of the current name or keyword
+%   d2b   int[8016] bytes of all names, one after the other
+%   d2c   int[504]  d2c[k] = position of name k in d2b
+%   d2d   int[504]  d2d[k] = length of name k
+%   d3b   int[504]  d3b[k] = 1 once variable k is defined (assigned)
+%   d3c   number of names in the table
+%   d3d   number of bytes used in d2b
+%   d4b   int[40]   bytes of the name being scanned
+%   d4c   length of the name being scanned
+%   d5b   next free label number (labels L0, L1, ...)
+%   d5c   the offending byte of a lexical error
+%
+% LOCAL VARIABLES are explained in the comment of each function; b2 is
+% always the (often dummy) input parameter.
+%
+% ERROR CODES (input of _fail)
+%    1 unexpected character '<c>'     8 expected expression
+%    2 unexpected byte <n>            9 expected ')'
+%    3 integer literal too large     10 expected '{'
+%    4 identifier too long           11 expected '}'
+%    5 expected statement            12 expected comparison operator
+%    6 expected '='                  13 undefined variable <name>
+%    7 expected ';'
+% =========================================================================
+
+
+% ============================== lexer ====================================
+
+% _advance: moves to the next source byte.  The line counter goes up when
+% the byte being left behind is a LF, so d3 is always the line of d2.
+_advance input parameter list [int b2];
+	if (d2 == '\n') then
+		d3 <--- d3 + 1;
+	endif
+	readchar(d2);
+	return;
+end
+
+% _class: classifies the byte b2 (used where a condition alone cannot,
+% since conditions allow no arithmetic and no calls).
+% Output b3: 1 digit, 2 letter or '_', 3 blank (space, tab, CR, LF),
+% 4 '#' (start of a comment), 0 anything else (including -1, end of input).
+_class input parameter list [int b2]
+output parameter list [int b3];
+	b3 <--- 0;
+	if ((b2 >= '0') &&& (b2 <= '9')) then
+		b3 <--- 1;
+	endif
+	if (((b2 >= 'a') &&& (b2 <= 'z')) @@@ ((b2 >= 'A') &&& (b2 <= 'Z'))) then
+		b3 <--- 2;
+	endif
+	if (b2 == '_') then
+		b3 <--- 2;
+	endif
+	if (((b2 == ' ') @@@ (b2 == '\t')) @@@ ((b2 == '\r') @@@ (b2 == '\n'))) then
+		b3 <--- 3;
+	endif
+	if (b2 == '#') then
+		b3 <--- 4;
+	endif
+	return [b3];
+end
+
+% _next: scans the next token into d4 (and d5, d7), recording its line in
+% d6.  Blanks and comments before the token are skipped.
+% Locals: b3 class of the lookahead byte.
+_next input parameter list [int b2];
+	type int : b3;
+	[b3] <--- call _class with parameters [d2];
+	while (b3 >= 3)
+		if (b3 == 3) then
+			call _advance with parameters [b2];
+		else
+			% a comment runs up to (not including) the next LF
+			while ((d2 != '\n') &&& (d2 >= 0))
+				call _advance with parameters [b2];
+			endwhile
+		endif
+		[b3] <--- call _class with parameters [d2];
+	endwhile
+	d6 <--- d3;
+	if (d2 < 0) then
+		d4 <--- '$';
+	else
+		if (b3 == 1) then
+			call _number with parameters [b2];
+		else
+			if (b3 == 2) then
+				call _name with parameters [b2];
+			else
+				call _operator with parameters [b2];
+			endif
+		endif
+	endif
+	return;
+end
+
+% _number: scans [0-9]+ into d5.  Before appending digit b4 the value must
+% satisfy d5 * 10 + b4 <= 9223372036854775807, i.e.
+% d5 <= (9223372036854775807 - b4) / 10, else the literal is too large.
+% Locals: b3 class of the lookahead, b4 digit value, b5 largest d5 allowed
+% before appending b4, b6 error code.
+_number input parameter list [int b2];
+	type int : b3;
+	type int : b4;
+	type int : b5;
+	type int : b6;
+	d5 <--- 0;
+	[b3] <--- call _class with parameters [d2];
+	while (b3 == 1)
+		b4 <--- d2 - '0';
+		b5 <--- (9223372036854775807 - b4) / 10;
+		if (d5 > b5) then
+			b6 <--- 3;
+			call _fail with parameters [b6];
+		endif
+		d5 <--- d5 * 10 + b4;
+		call _advance with parameters [b2];
+		[b3] <--- call _class with parameters [d2];
+	endwhile
+	d4 <--- '0';
+	return;
+end
+
+% _name: scans [A-Za-z_][A-Za-z0-9_]* into d4b / d4c (at most 32 bytes),
+% looks it up in the name table and sets d4 to the keyword kind for
+% entries 0..3, otherwise to 'a' (a variable, index d7).
+% Locals: b3 class of the lookahead, b4 error code.
+_name input parameter list [int b2];
+	type int : b3;
+	type int : b4;
+	d4c <--- 0;
+	[b3] <--- call _class with parameters [d2];
+	while ((b3 == 1) @@@ (b3 == 2))
+		if (d4c == 32) then
+			b4 <--- 4;
+			call _fail with parameters [b4];
+		endif
+		d4b[d4c] <--- d2;
+		d4c <--- d4c + 1;
+		call _advance with parameters [b2];
+		[b3] <--- call _class with parameters [d2];
+	endwhile
+	[d7] <--- call _intern with parameters [b2];
+	d4 <--- 'a';
+	if (d7 == 0) then
+		d4 <--- 'w';
+	endif
+	if (d7 == 1) then
+		d4 <--- 'i';
+	endif
+	if (d7 == 2) then
+		d4 <--- 'e';
+	endif
+	if (d7 == 3) then
+		d4 <--- 'p';
+	endif
+	return;
+end
+
+% _intern: returns (b3) the index of the name d4b[0..d4c) in the name
+% table, adding it at the end if it is new.  Linear search: compare the
+% lengths first, then the bytes.
+% Locals: b4 entry being compared, b5 byte index in the scanned name,
+% b6 1 while all bytes compared so far are equal, b7 position in d2b.
+_intern input parameter list [int b2]
+output parameter list [int b3];
+	type int : b4;
+	type int : b5;
+	type int : b6;
+	type int : b7;
+	b3 <--- 0 - 1;
+	b4 <--- 0;
+	while ((b4 < d3c) &&& (b3 < 0))
+		if (d2d[b4] == d4c) then
+			b6 <--- 1;
+			b5 <--- 0;
+			b7 <--- d2c[b4];
+			while ((b5 < d4c) &&& (b6 == 1))
+				if (d2b[b7] != d4b[b5]) then
+					b6 <--- 0;
+				endif
+				b5 <--- b5 + 1;
+				b7 <--- b7 + 1;
+			endwhile
+			if (b6 == 1) then
+				b3 <--- b4;
+			endif
+		endif
+		b4 <--- b4 + 1;
+	endwhile
+	if (b3 < 0) then
+		% not found: append the name as entry d3c
+		b3 <--- d3c;
+		d2c[d3c] <--- d3d;
+		d2d[d3c] <--- d4c;
+		b5 <--- 0;
+		while (b5 < d4c)
+			d2b[d3d] <--- d4b[b5];
+			d3d <--- d3d + 1;
+			b5 <--- b5 + 1;
+		endwhile
+		d3c <--- d3c + 1;
+	endif
+	return [b3];
+end
+
+% _operator: scans an operator or punctuation token (longest match for
+% == != <= >=); any other byte is a lexical error.
+% Locals: b3 error code, b4 first byte of a possibly two-byte operator.
+_operator input parameter list [int b2];
+	type int : b3;
+	type int : b4;
+	d4 <--- d2;
+	if ((((d2 == '+') @@@ (d2 == '-')) @@@ ((d2 == '*') @@@ (d2 == '/'))) @@@ (((d2 == '(') @@@ (d2 == ')')) @@@ (((d2 == '{') @@@ (d2 == '}')) @@@ (d2 == ';')))) then
+		call _advance with parameters [b2];
+	else
+		if (((d2 == '=') @@@ (d2 == '<')) @@@ ((d2 == '>') @@@ (d2 == '!'))) then
+			b4 <--- d2;
+			call _advance with parameters [b2];
+			if (d2 == '=') then
+				% two-byte operator: map the first byte to its code
+				if (b4 == '=') then
+					d4 <--- 'E';
+				endif
+				if (b4 == '!') then
+					d4 <--- 'N';
+				endif
+				if (b4 == '<') then
+					d4 <--- 'L';
+				endif
+				if (b4 == '>') then
+					d4 <--- 'G';
+				endif
+				call _advance with parameters [b2];
+			else
+				if (b4 == '!') then
+					% '!' is only valid as the start of !=
+					d5c <--- '!';
+					b3 <--- 1;
+					call _fail with parameters [b3];
+				endif
+			endif
+		else
+			d5c <--- d2;
+			if ((d2 >= 33) &&& (d2 <= 126)) then
+				b3 <--- 1;
+			else
+				b3 <--- 2;
+			endif
+			call _fail with parameters [b3];
+		endif
+	endif
+	return;
+end
+
+% _keywords: enters while, if, else, print as names 0..3 (see _name).
+% Locals: b3 index returned by _intern (known in advance, not used).
+_keywords input parameter list [int b2];
+	type int : b3;
+	d4b[0] <--- 'w'; d4b[1] <--- 'h'; d4b[2] <--- 'i'; d4b[3] <--- 'l'; d4b[4] <--- 'e';
+	d4c <--- 5;
+	[b3] <--- call _intern with parameters [b2];
+	d4b[0] <--- 'i'; d4b[1] <--- 'f';
+	d4c <--- 2;
+	[b3] <--- call _intern with parameters [b2];
+	d4b[0] <--- 'e'; d4b[1] <--- 'l'; d4b[2] <--- 's'; d4b[3] <--- 'e';
+	d4c <--- 4;
+	[b3] <--- call _intern with parameters [b2];
+	d4b[0] <--- 'p'; d4b[1] <--- 'r'; d4b[2] <--- 'i'; d4b[3] <--- 'n'; d4b[4] <--- 't';
+	d4c <--- 5;
+	[b3] <--- call _intern with parameters [b2];
+	return;
+end
+
+
+% ============================== errors ===================================
+
+% _printname: writes the bytes of name b2 (an index into the name table).
+% Locals: b3 position in d2b, b4 end of the name in d2b.
+_printname input parameter list [int b2];
+	type int : b3;
+	type int : b4;
+	b3 <--- d2c[b2];
+	b4 <--- b3 + d2d[b2];
+	while (b3 < b4)
+		writechar(d2b[b3]);
+		b3 <--- b3 + 1;
+	endwhile
+	return;
+end
+
+% _fail: reports error b2 (see ERROR CODES) at the line of the current
+% token and stops with exit status 1.  Everything printed before ends with
+% a LF, so "error: ..." starts a line and is the last line of the output.
+_fail input parameter list [int b2];
+	print("error: ", d6, ": ");
+	if (b2 == 1) then
+		print("unexpected character '");
+		writechar(d5c);
+		print("'");
+	endif
+	if (b2 == 2) then
+		print("unexpected byte ", d5c);
+	endif
+	if (b2 == 3) then
+		print("integer literal too large");
+	endif
+	if (b2 == 4) then
+		print("identifier too long");
+	endif
+	if (b2 == 5) then
+		print("expected statement");
+	endif
+	if (b2 == 6) then
+		print("expected '='");
+	endif
+	if (b2 == 7) then
+		print("expected ';'");
+	endif
+	if (b2 == 8) then
+		print("expected expression");
+	endif
+	if (b2 == 9) then
+		print("expected ')'");
+	endif
+	if (b2 == 10) then
+		print("expected '{'");
+	endif
+	if (b2 == 11) then
+		print("expected '}'");
+	endif
+	if (b2 == 12) then
+		print("expected comparison operator");
+	endif
+	if (b2 == 13) then
+		print("undefined variable ");
+		call _printname with parameters [d7];
+	endif
+	print("\n");
+	exit(1);
+	return;
+end
+
+% _expect: the current token must be of kind b2 (one of ; = ) {); it is
+% consumed, which scans the next token.  Otherwise the matching
+% "expected ..." error is reported.
+% Locals: b3 error code.
+_expect input parameter list [int b2];
+	type int : b3;
+	if (d4 != b2) then
+		b3 <--- 7;
+		if (b2 == '=') then
+			b3 <--- 6;
+		endif
+		if (b2 == ')') then
+			b3 <--- 9;
+		endif
+		if (b2 == '{') then
+			b3 <--- 10;
+		endif
+		call _fail with parameters [b3];
+	endif
+	call _next with parameters [b2];
+	return;
+end
+
+% _newlabel: returns (b3) a fresh label number.
+_newlabel input parameter list [int b2]
+output parameter list [int b3];
+	b3 <--- d5b;
+	d5b <--- d5b + 1;
+	return [b3];
+end
+
+
+% ============================== expressions ==============================
+% Each function compiles its construct so that the value ends up in rax.
+
+% _expr:  expr ::= term { ('+' | '-') term }
+% Locals: b3 the operator.
+_expr input parameter list [int b2];
+	type int : b3;
+	call _term with parameters [b2];
+	while ((d4 == '+') @@@ (d4 == '-'))
+		b3 <--- d4;
+		call _next with parameters [b2];
+		print("    push rax\n");
+		call _term with parameters [b2];
+		print("    mov rcx, rax\n    pop rax\n");
+		if (b3 == '+') then
+			print("    add rax, rcx\n");
+		else
+			print("    sub rax, rcx\n");
+		endif
+	endwhile
+	return;
+end
+
+% _term:  term ::= unary { ('*' | '/') unary }
+% Division goes through the runtime routine tl_div (zero check, MIN / -1).
+% Locals: b3 the operator.
+_term input parameter list [int b2];
+	type int : b3;
+	call _unary with parameters [b2];
+	while ((d4 == '*') @@@ (d4 == '/'))
+		b3 <--- d4;
+		call _next with parameters [b2];
+		print("    push rax\n");
+		call _unary with parameters [b2];
+		print("    mov rcx, rax\n    pop rax\n");
+		if (b3 == '*') then
+			print("    imul rax, rcx\n");
+		else
+			print("    call tl_div\n");
+		endif
+	endwhile
+	return;
+end
+
+% _unary:  unary ::= '-' unary | primary
+_unary input parameter list [int b2];
+	if (d4 == '-') then
+		call _next with parameters [b2];
+		call _unary with parameters [b2];
+		print("    neg rax\n");
+	else
+		call _primary with parameters [b2];
+	endif
+	return;
+end
+
+% _primary:  primary ::= INT | NAME | '(' expr ')'
+% A NAME must already be defined; this is checked before the NAME is
+% consumed, so before the token after it is scanned (spec B.4).
+% Locals: b3 error code or expected token.
+_primary input parameter list [int b2];
+	type int : b3;
+	if (d4 == '0') then
+		print("    mov rax, ", d5, "\n");
+		call _next with parameters [b2];
+	else
+		if (d4 == 'a') then
+			if (d3b[d7] == 0) then
+				b3 <--- 13;
+				call _fail with parameters [b3];
+			endif
+			print("    mov rax, [rel V", d7, "]\n");
+			call _next with parameters [b2];
+		else
+			if (d4 == '(') then
+				call _next with parameters [b2];
+				call _expr with parameters [b2];
+				b3 <--- ')';
+				call _expect with parameters [b3];
+			else
+				b3 <--- 8;
+				call _fail with parameters [b3];
+			endif
+		endif
+	endif
+	return;
+end
+
+% _cond:  cond ::= expr relop expr
+% Compiles a comparison that jumps to label L<b2> when it is FALSE, using
+% the inverse jump of the operator (signed comparisons).
+% Locals: b3 the operator, b4 error code.
+_cond input parameter list [int b2];
+	type int : b3;
+	type int : b4;
+	call _expr with parameters [b2];
+	b3 <--- d4;
+	if (~((((d4 == '<') @@@ (d4 == '>')) @@@ ((d4 == 'L') @@@ (d4 == 'G'))) @@@ ((d4 == 'E') @@@ (d4 == 'N')))) then
+		b4 <--- 12;
+		call _fail with parameters [b4];
+	endif
+	call _next with parameters [b2];
+	print("    push rax\n");
+	call _expr with parameters [b2];
+	print("    mov rcx, rax\n    pop rax\n    cmp rax, rcx\n");
+	if (b3 == 'E') then
+		print("    jne L", b2, "\n");
+	endif
+	if (b3 == 'N') then
+		print("    je L", b2, "\n");
+	endif
+	if (b3 == '<') then
+		print("    jge L", b2, "\n");
+	endif
+	if (b3 == 'L') then
+		print("    jg L", b2, "\n");
+	endif
+	if (b3 == '>') then
+		print("    jle L", b2, "\n");
+	endif
+	if (b3 == 'G') then
+		print("    jl L", b2, "\n");
+	endif
+	return;
+end
+
+
+% ============================== statements ===============================
+
+% _block:  block ::= '{' { stmt } '}'
+% End of input before the closing brace is "expected '}'".
+% Locals: b3 expected token or error code.
+_block input parameter list [int b2];
+	type int : b3;
+	b3 <--- '{';
+	call _expect with parameters [b3];
+	while (d4 != '}')
+		if (d4 == '$') then
+			b3 <--- 11;
+			call _fail with parameters [b3];
+		endif
+		call _stmt with parameters [b2];
+	endwhile
+	call _next with parameters [b2];
+	return;
+end
+
+% _stmt: one statement.  The generated code of each statement starts with
+% a comment giving its source line.
+%   NAME = expr;     -> expr; mov [rel V<k>], rax   (then NAME is defined)
+%   print expr;      -> expr; printf("%lld\n", rax)
+%   while c b        -> Ltop: c (false: jump Lend); b; jmp Ltop; Lend:
+%   if c b1 else b2  -> c (false: jump Lelse); b1; jmp Lend; Lelse: b2; Lend:
+% Locals: b3 name index / first label, b4 expected token / second label,
+% b5 error code.
+_stmt input parameter list [int b2];
+	type int : b3;
+	type int : b4;
+	type int : b5;
+	if (d4 == 'a') then
+		b3 <--- d7;
+		print("    ; line ", d6, ": ");
+		call _printname with parameters [b3];
+		print(" = ...\n");
+		call _next with parameters [b2];
+		b4 <--- '=';
+		call _expect with parameters [b4];
+		call _expr with parameters [b2];
+		b4 <--- ';';
+		call _expect with parameters [b4];
+		print("    mov [rel V", b3, "], rax\n");
+		d3b[b3] <--- 1;
+	else
+		if (d4 == 'p') then
+			print("    ; line ", d6, ": print\n");
+			call _next with parameters [b2];
+			call _expr with parameters [b2];
+			b4 <--- ';';
+			call _expect with parameters [b4];
+			print("    mov rsi, rax\n    lea rdi, [rel fmt]\n    xor eax, eax\n    call printf wrt ..plt\n");
+		else
+			if (d4 == 'w') then
+				print("    ; line ", d6, ": while\n");
+				[b3] <--- call _newlabel with parameters [b2];
+				[b4] <--- call _newlabel with parameters [b2];
+				print("L", b3, ":\n");
+				call _next with parameters [b2];
+				call _cond with parameters [b4];
+				call _block with parameters [b2];
+				print("    jmp L", b3, "\nL", b4, ":\n");
+			else
+				if (d4 == 'i') then
+					print("    ; line ", d6, ": if\n");
+					[b3] <--- call _newlabel with parameters [b2];
+					call _next with parameters [b2];
+					call _cond with parameters [b3];
+					call _block with parameters [b2];
+					if (d4 == 'e') then
+						[b4] <--- call _newlabel with parameters [b2];
+						print("    jmp L", b4, "\nL", b3, ":\n");
+						call _next with parameters [b2];
+						call _block with parameters [b2];
+						print("L", b4, ":\n");
+					else
+						print("L", b3, ":\n");
+					endif
+				else
+					b5 <--- 5;
+					call _fail with parameters [b5];
+				endif
+			endif
+		endif
+	endif
+	return;
+end
+
+% _finish: after the last statement: the epilogue of main, the division
+% routine, the data and one .bss quadword per variable (names 4.. of the
+% table; 0..3 are the keywords).
+% Locals: b3 name index.
+_finish input parameter list [int b2];
+	type int : b3;
+	print("    ; end of program\n    xor eax, eax\n    pop rbp\n    ret\n");
+	print("tl_div:\n    test rcx, rcx\n    jz tl_divzero\n    cmp rcx, -1\n    je tl_divneg\n    cqo\n    idiv rcx\n    ret\n");
+	print("tl_divneg:\n    neg rax\n    ret\n");
+	print("tl_divzero:\n    and rsp, -16\n    lea rdi, [rel msg]\n    xor eax, eax\n    call printf wrt ..plt\n    mov edi, 1\n    call exit wrt ..plt\n");
+	print("section .data\nfmt: db \"%lld\", 10, 0\nmsg: db \"runtime error: division by zero\", 10, 0\n");
+	print("section .bss\n");
+	b3 <--- 4;
+	while (b3 < d3c)
+		print("V", b3, ": resq 1    ; ");
+		call _printname with parameters [b3];
+		print("\n");
+		b3 <--- b3 + 1;
+	endwhile
+	print("section .note.GNU-stack noalloc noexec nowrite progbits\n");
+	return;
+end
+
+% _main: program ::= { stmt } EOF
+% Declares the globals, enters the keywords, scans the first token, prints
+% the header and the prologue of main, then compiles statement after
+% statement until the end of input.
+% Locals: b2 dummy argument.
+_main
+	type int : d2 : global;
+	type int : d3 : global;
+	type int : d4 : global;
+	type int : d5 : global;
+	type int : d6 : global;
+	type int : d7 : global;
+	type int[8016] : d2b : global;
+	type int[504] : d2c : global;
+	type int[504] : d2d : global;
+	type int[504] : d3b : global;
+	type int : d3c : global;
+	type int : d3d : global;
+	type int[40] : d4b : global;
+	type int : d4c : global;
+	type int : d5b : global;
+	type int : d5c : global;
+	type int : b2;
+	d3 <--- 1;
+	call _keywords with parameters [b2];
+	call _advance with parameters [b2];
+	call _next with parameters [b2];
+	print("default rel\nextern printf, exit\nglobal main\nsection .text\nmain:\n    push rbp\n    mov rbp, rsp\n");
+	while (d4 != '$')
+		call _stmt with parameters [b2];
+	endwhile
+	call _finish with parameters [b2];
+	return;
+end
