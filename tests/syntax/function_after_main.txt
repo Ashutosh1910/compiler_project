@@ -1,0 +1,7 @@
+% _main must be the last function.
+_main
+	return;
+end
+_late input parameter list [int b2]; %? syntax-error
+	return;
+end

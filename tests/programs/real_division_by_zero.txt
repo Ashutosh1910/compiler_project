@@ -1,0 +1,15 @@
+% Real division by zero follows IEEE-754 and does not stop the program.
+%? stdout: inf
+%? stdout: -inf
+%? stdout: 1
+_main
+	type real : c2;
+	type real : c3;
+	c3 <--- 0.00;
+	c2 <--- 1.00 / c3;
+	write(c2);
+	c2 <--- (0.00 - 1.00) / c3;
+	write(c2);
+	write(1);
+	return;
+end

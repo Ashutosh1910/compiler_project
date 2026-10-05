@@ -1,0 +1,7 @@
+% Loop and branch bodies need at least one statement.
+_main
+	type int : b2;
+	while (b2 < 3)
+	endwhile %? syntax-error
+	return;
+end

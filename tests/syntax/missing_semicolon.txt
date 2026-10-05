@@ -1,0 +1,7 @@
+% A statement without its semicolon.
+_main
+	type int : b2;
+	b2 <--- 5
+	write(b2); %? syntax-error
+	return;
+end

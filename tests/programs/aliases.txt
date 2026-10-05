@@ -1,0 +1,30 @@
+% definetype names are the same type as the record they rename.
+%? stdout: 3.00 4.00
+%? stdout: 6.00 8.00
+%? stdout: 6.00 8.00
+_norm input parameter list [#point b2]
+output parameter list [record #coord b3];
+	b3 <--- b2 * 2;
+	return [b3];
+end
+
+_main
+	record #coord
+		type real : x;
+		type real : y;
+	endrecord
+	definetype record #coord as #point
+	definetype record #point as #spot
+	type #point : d2;
+	type #spot : d3;
+	type record #coord : d4;
+	d2.x <--- 3.00;
+	d2.y <--- 4.00;
+	d3 <--- d2;
+	write(d3);
+	[d4] <--- call _norm with parameters [d3];
+	write(d4);
+	d2 <--- d4 + d3 - d3;
+	write(d2);
+	return;
+end

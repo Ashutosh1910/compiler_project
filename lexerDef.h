@@ -101,7 +101,8 @@ typedef struct State {
   int line;
   int isAtEnd;
   int scanNext;
-  int logging;  
+  int logging;
+  int errorCount; // number of lexical errors reported so far
 } State;
 
 #endif

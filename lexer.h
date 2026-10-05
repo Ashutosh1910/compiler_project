@@ -14,11 +14,11 @@ State initializeState(const char *fileName,int logging);
 
 TokenList scan(State *S);
 
-int match(char a, char b, State *s);
+int match(char a, char b, const char *msg, State *s);
 
 Token newToken(TokenType type, State *s);
 TokenList newTokenList(int size);
-void appendToTokenList(Token c, TokenList t);
+void appendToTokenList(Token c, State *s);
 
 Token getTokenAt(int index);
 

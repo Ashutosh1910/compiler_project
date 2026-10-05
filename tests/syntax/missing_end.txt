@@ -1,0 +1,6 @@
+% The program stops before 'end'.
+_main
+	type int : b2;
+	b2 <--- 5;
+	return;
+%? syntax-error

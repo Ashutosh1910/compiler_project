@@ -1,0 +1,114 @@
+% Calls: several inputs and outputs, call chains, value semantics.
+%? stdout: 13
+%? stdout: 30
+%? stdout: 9.00
+%? stdout: 7
+%? stdout: 10.00 20.00
+%? stdout: 1.00 2.00
+%? stdout: 1
+%? stdout: 1
+%? stdout: 1
+%? stdout: 0
+%? stdout: 5
+%? stdout: 6
+_sumprod input parameter list [int b2, int b3]
+output parameter list [int b4, int b5];
+	b4 <--- b2 + b3;
+	b5 <--- b2 * b3;
+	return [b4, b5];
+end
+
+_square input parameter list [real c2]
+output parameter list [real c3];
+	c3 <--- c2 * c2;
+	return [c3];
+end
+
+_hyp input parameter list [int b2, int b3]
+output parameter list [int b4];
+	type int : b5;
+	type int : b6;
+	[b5, b6] <--- call _sumprod with parameters [b2, b3];
+	b4 <--- b5 - b6 + b6;
+	return [b4];
+end
+
+_scaled input parameter list [record #pt d2]
+output parameter list [record #pt d3];
+	% changing an input does not change the caller's variable
+	d2.x <--- d2.x * 10;
+	d2.y <--- d2.y * 10;
+	d3 <--- d2;
+	return [d3];
+end
+
+_counter input parameter list [int b2]
+output parameter list [int b3];
+	% locals start at zero on every call
+	type int : b4;
+	b4 <--- b4 + 1;
+	b3 <--- b4;
+	return [b3];
+end
+
+_maybe input parameter list [int b2]
+output parameter list [int b3];
+	if (b2 > 0) then
+		b3 <--- 5;
+	endif
+	return [b3];
+end
+
+_inc input parameter list [int b2]
+output parameter list [int b3];
+	b3 <--- b2 + 1;
+	return [b3];
+end
+
+_main
+	record #pt
+		type real : x;
+		type real : y;
+	endrecord
+	type int : b2;
+	type int : b3;
+	type int : b4;
+	type int : b5;
+	type int : b6;
+	type real : c2;
+	type #pt : d2;
+	type #pt : d3;
+	b2 <--- 3;
+	b3 <--- 10;
+	[b4, b5] <--- call _sumprod with parameters [b2, b3];
+	write(b4);
+	write(b5);
+	c2 <--- 3.00;
+	[c2] <--- call _square with parameters [c2];
+	write(c2);
+	b6 <--- 4;
+	[b4] <--- call _hyp with parameters [b2, b6];
+	write(b4);
+	d2.x <--- 1.00;
+	d2.y <--- 2.00;
+	[d3] <--- call _scaled with parameters [d2];
+	write(d3);
+	write(d2);
+	[b4] <--- call _counter with parameters [b2];
+	[b5] <--- call _counter with parameters [b2];
+	[b6] <--- call _counter with parameters [b2];
+	write(b4);
+	write(b5);
+	write(b6);
+	b6 <--- 0;
+	[b4] <--- call _maybe with parameters [b6];
+	write(b4);
+	[b4] <--- call _maybe with parameters [b2];
+	write(b4);
+	b2 <--- 0;
+	while (b2 < 6)
+		[b2] <--- call _inc with parameters [b2];
+	endwhile
+	write(b2);
+	return;
+end

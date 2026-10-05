@@ -1,0 +1,6 @@
+% The language has no unary minus: write (0 - 5) instead.
+_main
+	type int : b2;
+	b2 <--- -5; %? syntax-error
+	return;
+end

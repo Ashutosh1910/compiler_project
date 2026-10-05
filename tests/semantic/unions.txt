@@ -1,0 +1,33 @@
+% A union is only usable as a field of a (variant) record, and only one of
+% its fields at a time.
+_main
+	record #pt
+		type real : x;
+		type real : y;
+	endrecord
+	union #u
+		type int : i;
+		type #pt : p;
+	endunion
+	record #var
+		type int : tag;
+		type #u : val;
+	endrecord
+	type union #u : b2; %? error: variable b2 cannot have union type #u
+	type #var : b3;
+	type #var : b4;
+	type real : c2;
+	b3.tag <--- 1;
+	b3.val.i <--- 5;
+	c2 <--- b3.val.p.x;
+	b4 <--- b3;
+	b4 <--- b3 + b4; %? error: arithmetic is not allowed on #var because it contains a union
+	c2 <--- b3.val + 1; %? error: union b3.val cannot be used as a value
+	b3.val <--- b4.val; %? error: cannot assign to union b3.val %? error: union b4.val cannot be used as a value
+	write(b3); %? error: cannot write b3 of type #var because it contains a union
+	read(b4); %? error: cannot read b4 of type #var because it contains a union
+	write(b3.val); %? error: cannot write b3.val of type #u
+	write(b3.val.p);
+	b3.val.p <--- b3.val.p * 2;
+	return;
+end

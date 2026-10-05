@@ -1,0 +1,16 @@
+% A name may be declared only once in a function; globals once overall.
+_f input parameter list [int b2, int b2] %? error: variable b2 is already declared in _f
+output parameter list [int b3];
+	type int : b3; %? error: variable b3 is already declared in _f
+	type real : b4;
+	type int : b4; %? error: variable b4 is already declared in _f
+	b3 <--- b2;
+	return [b3];
+end
+
+_main
+	type int : c2 : global;
+	type real : c2 : global; %? error: global variable c2 is already declared at line 12
+	type int : c3;
+	return;
+end

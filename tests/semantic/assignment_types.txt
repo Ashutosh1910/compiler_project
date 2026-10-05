@@ -1,0 +1,36 @@
+% Assignment compatibility: same type, or int into real. Records use name
+% equivalence, and a definetype alias is the same type as the original.
+_main
+	record #pt
+		type real : x;
+		type real : y;
+	endrecord
+	record #ipt
+		type int : x;
+		type int : y;
+	endrecord
+	definetype record #pt as #point
+	type int : b2;
+	type real : c2;
+	type #pt : d2;
+	type #point : d3;
+	type #ipt : d4;
+	c2 <--- b2;
+	c2 <--- b2 + c2;
+	b2 <--- c2; %? error: cannot assign a value of type real to b2 of type int
+	b2 <--- b2 * 2.50; %? error: cannot assign a value of type real to b2 of type int
+	b2 <--- b2 / 2;
+	d2 <--- d3;
+	d3 <--- d2 + d3;
+	d2 <--- d4; %? error: cannot assign a value of type #ipt to d2 of type #pt
+	d2 <--- b2; %? error: cannot assign a value of type int to d2 of type #pt
+	b2 <--- d4; %? error: cannot assign a value of type #ipt to b2 of type int
+	b2 <--- d4.x;
+	c2 <--- d2.z; %? error: d2 (type #pt) has no field named z
+	c2 <--- b2.x; %? error: b2 has type int and has no field x
+	c2 <--- d2.x.y; %? error: d2.x has type real and has no field y
+	b2 <--- 99999999999999999999; %? error: integer constant 99999999999999999999 is too large
+	b2 <--- 9223372036854775807;
+	write(99999999999999999999); %? error: integer constant 99999999999999999999 is too large
+	return;
+end

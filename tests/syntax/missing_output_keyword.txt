@@ -1,0 +1,8 @@
+_f input parameter list [int b2]
+output parameter [int b3]; %? syntax-error
+	b3 <--- b2;
+	return [b3];
+end
+_main
+	return;
+end

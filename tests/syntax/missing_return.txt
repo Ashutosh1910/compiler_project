@@ -1,0 +1,5 @@
+% Every function body ends with a return statement.
+_main
+	type int : b2;
+	b2 <--- 1;
+end %? syntax-error

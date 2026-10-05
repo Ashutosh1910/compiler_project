@@ -1,0 +1,7 @@
+% Declarations must come before statements.
+_main
+	type int : b2;
+	b2 <--- 1;
+	type int : b3; %? syntax-error
+	return;
+end

@@ -13,6 +13,11 @@
 TermMapEntry termMap[TERM_MAP_CAP];
 int termMapReady = 0;
 
+// path of the grammar file; the driver may point it next to the executable
+static const char *grammarFile = "grammar.txt";
+void setGrammarFile(const char *path) { grammarFile = path; }
+const char *getGrammarFile(void) { return grammarFile; }
+
 unsigned int termHash(const char *s) {
   unsigned int h = 0;
   while (*s)
@@ -223,6 +228,7 @@ const char *getNTName(Grammar *g, int ntIndex) {
 
 int firstOfString(Grammar *g, FirstFollowSets *ff, Symbol *syms, int count,
                   BitSet *dst) {
+  (void)g;
   for (int i = 0; i < count; i++) {
     if (syms[i].kind == SYM_TERMINAL) {
       bs_add(dst, syms[i].id);
@@ -438,6 +444,7 @@ void addChild(TreeNode *parent, TreeNode *child) {
 void addSyntaxError(SyntaxError **head, int lineNo, const char *message) {
   SyntaxError *err = (SyntaxError *)malloc(sizeof(SyntaxError));
   err->lineNo = lineNo;
+  err->next = NULL;
   strncpy(err->message, message, sizeof(err->message) - 1);
   err->message[sizeof(err->message) - 1] = '\0';
 
@@ -778,7 +785,7 @@ void parseWithPrinting(const char *filename, const char *outputfile) {
   TokenList tl = scan(&state);
   printf("Lexing complete: %d tokens\n", tl.size);
 
-  Grammar *grammar = loadGrammar("grammar.txt");
+  Grammar *grammar = loadGrammar(grammarFile);
   if (!grammar) {
     printf("Failed to load grammar\n");
     return;
@@ -817,7 +824,7 @@ void parseWithPrinting(const char *filename, const char *outputfile) {
 void parseWithoutPrinting(const char *filename) {
   State state = initializeState(filename, 0);
   TokenList tl = scan(&state);
-  Grammar *grammar = loadGrammar("grammar.txt");
+  Grammar *grammar = loadGrammar(grammarFile);
   if (!grammar) {
     printf("Failed to load grammar\n");
     return;
@@ -827,7 +834,7 @@ void parseWithoutPrinting(const char *filename) {
   ParseTable pt;
   createParseTable(grammar, &ff, &pt);
   SyntaxError *errors = NULL;
-  TreeNode *tree = parseTokens(&tl, grammar, &pt, &ff, &errors, 0);
+  parseTokens(&tl, grammar, &pt, &ff, &errors, 0);
   if (errors) {
     printSyntaxErrors(errors);
     freeSyntaxErrors(errors);

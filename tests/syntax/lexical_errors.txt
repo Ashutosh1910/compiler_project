@@ -1,0 +1,8 @@
+% Lexical errors are reported together with the syntax errors they cause.
+_main
+	type int : b2;
+	b2 <--- 12.5; %? syntax-error %? lex-error: expected number after decimal
+	b2 <-- 3; %? syntax-error %? lex-error: expected <--
+	b2 <--- b2 $ 1; %? syntax-error %? lex-error: $ not recognized
+	return;
+end

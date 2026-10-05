@@ -1,0 +1,28 @@
+% The return list may name any variable of the right type.
+%? stdout: 7
+%? stdout: 30
+_pick input parameter list [int b2, int b3]
+output parameter list [int b4];
+	type int : b5;
+	b5 <--- b2 * b3;
+	return [b5];
+end
+
+_echo input parameter list [int b2]
+output parameter list [int b3];
+	return [b2];
+end
+
+_main
+	type int : b2;
+	type int : b3;
+	type int : b4;
+	b2 <--- 7;
+	[b4] <--- call _echo with parameters [b2];
+	write(b4);
+	b3 <--- 3;
+	b2 <--- 10;
+	[b4] <--- call _pick with parameters [b2, b3];
+	write(b4);
+	return;
+end

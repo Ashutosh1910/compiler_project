@@ -1,0 +1,34 @@
+% Field access, nested records, whole-record copy and printing.
+%? stdout: 1.50 2.50
+%? stdout: 1.50 2.50 3.00 4.00
+%? stdout: 3.00
+%? stdout: 1.50 2.50 3.00 4.00
+%? stdout: 9.00 2.50 3.00 4.00
+%? stdout: 1.50 2.50
+_main
+	record #pt
+		type real : x;
+		type real : y;
+	endrecord
+	record #seg
+		type #pt : a;
+		type #pt : b;
+	endrecord
+	type #pt : d2;
+	type #seg : d3;
+	type #seg : d4;
+	d2.x <--- 1.50;
+	d2.y <--- 2.50;
+	write(d2);
+	d3.a <--- d2;
+	d3.b.x <--- 3.00;
+	d3.b.y <--- 4.00;
+	write(d3);
+	write(d3.b.x);
+	d4 <--- d3;
+	write(d4);
+	d4.a.x <--- 9.00;
+	write(d4);
+	write(d3.a);
+	return;
+end

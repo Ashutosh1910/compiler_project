@@ -1,0 +1,27 @@
+% A function may only call functions defined above it, never itself, and
+% function names are unique.
+_first input parameter list [int b2]
+output parameter list [int b3];
+	[b3] <--- call _second with parameters [b2]; %? error: function _second is called before it is defined
+	return [b3];
+end
+
+_second input parameter list [int b2]
+output parameter list [int b3];
+	[b3] <--- call _second with parameters [b2]; %? error: function _second cannot call itself
+	return [b3];
+end
+
+_first input parameter list [int b4] %? error: function _first is already defined at line 3
+output parameter list [int b5];
+	b5 <--- b4;
+	return [b5];
+end
+
+_main
+	type int : b2;
+	type int : b3;
+	[b3] <--- call _first with parameters [b2];
+	[b3] <--- call _second with parameters [b2];
+	return;
+end

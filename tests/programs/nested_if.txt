@@ -1,0 +1,29 @@
+% Classify the numbers read from input.
+%? stdin: -5 0 7 150
+%? stdout: 0
+%? stdout: 1
+%? stdout: 2
+%? stdout: 3
+_main
+	type int : b2;
+	type int : b3;
+	b3 <--- 0;
+	while (b3 < 4)
+		read(b2);
+		if (b2 < 0) then
+			write(0);
+		else
+			if (b2 == 0) then
+				write(1);
+			else
+				if (b2 > 100) then
+					write(3);
+				else
+					write(2);
+				endif
+			endif
+		endif
+		b3 <--- b3 + 1;
+	endwhile
+	return;
+end

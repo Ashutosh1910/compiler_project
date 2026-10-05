@@ -1,0 +1,7 @@
+_main
+	type int : b2;
+	if (b2 < 3)
+		write(b2); %? syntax-error
+	endif
+	return;
+end

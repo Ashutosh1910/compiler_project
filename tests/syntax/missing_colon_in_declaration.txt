@@ -1,0 +1,5 @@
+_main
+	type int b2; %? syntax-error
+	type real : c2;
+	return;
+end

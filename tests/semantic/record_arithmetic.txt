@@ -1,0 +1,36 @@
+% Records support + and - with the same record type, and * or / by a scalar
+% (a real scalar only when every field is real).
+_main
+	record #pt
+		type real : x;
+		type real : y;
+	endrecord
+	record #ipt
+		type int : x;
+		type int : y;
+	endrecord
+	type #pt : d2;
+	type #pt : d3;
+	type #ipt : d4;
+	type int : b2;
+	type real : c2;
+	d2 <--- d2 + d3;
+	d2 <--- d2 - d3;
+	d2 <--- d2 * 2;
+	d2 <--- 2 * d2;
+	d2 <--- d2 * c2;
+	d2 <--- d2 / b2;
+	d2 <--- (d2 + d3) * 2 - d3 / c2;
+	d4 <--- d4 * b2;
+	d4 <--- d4 / 2;
+	d4 <--- d4 * 1.50; %? error: cannot multiply #ipt by a real value because it has int fields
+	d4 <--- d4 / c2; %? error: cannot divide #ipt by a real value because it has int fields
+	d2 <--- d2 + d4; %? error: operator + cannot be applied to #pt and #ipt
+	d2 <--- d2 + 1; %? error: operator + cannot be applied to #pt and int
+	d2 <--- d2 * d3; %? error: operator * cannot be applied to #pt and #pt
+	d2 <--- 2 / d2; %? error: operator / cannot be applied to int and #pt
+	d2 <--- d2 - 1.50; %? error: operator - cannot be applied to #pt and real
+	c2 <--- d2 * 2; %? error: cannot assign a value of type #pt to c2 of type real
+	d2 <--- (d2 + d4) * 2;  %? error: operator + cannot be applied to #pt and #ipt
+	return;
+end

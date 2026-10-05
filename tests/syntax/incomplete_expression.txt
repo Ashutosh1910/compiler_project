@@ -1,0 +1,7 @@
+% An operator with no right operand.
+_main
+	type int : b2;
+	b2 <--- b2 + ; %? syntax-error
+	write(b2);
+	return;
+end

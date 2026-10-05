@@ -1,0 +1,51 @@
+% The return list must match the output parameters, and a returned output
+% parameter or local must be assigned somewhere in the function.
+_a input parameter list [int b2]
+output parameter list [int b3];
+	return [b3]; %? error: b3 is returned by _a but is never assigned a value
+end
+
+_b input parameter list [int b2]
+output parameter list [int b3, real c3];
+	b3 <--- 1;
+	c3 <--- 1.00;
+	return [b3]; %? error: function _b must return 2 value(s) (its output parameters), but returns 1
+end
+
+_c input parameter list [int b2]
+output parameter list [int b3];
+	type real : c4;
+	c4 <--- 1.00;
+	b3 <--- 2;
+	return [c4]; %? error: returned variable c4 has type real, but output parameter b3 has type int
+end
+
+_d input parameter list [int b2]
+output parameter list [int b3];
+	return [b2];
+end
+
+_e input parameter list [int b2]
+output parameter list [int b3];
+	type int : b4;
+	return [b4]; %? error: b4 is returned by _e but is never assigned a value
+end
+
+_f input parameter list [int b2]
+output parameter list [int b3];
+	b3 <--- 2;
+	return; %? error: function _f must return 1 value(s) (its output parameters), but returns 0
+end
+
+_g input parameter list [int b2]
+output parameter list [int b3];
+	if (b2 > 0) then
+		b3 <--- 1;
+	endif
+	return [b3];
+end
+
+_main
+	type int : b2;
+	return [b2]; %? error: _main cannot return values
+end

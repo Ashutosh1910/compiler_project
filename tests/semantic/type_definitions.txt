@@ -1,0 +1,33 @@
+% Record, union and definetype rules.
+_main
+	record #pt
+		type real : x;
+		type real : x; %? error: duplicate field x in #pt
+	endrecord
+	record #pt %? error: type #pt is already defined at line 3
+		type int : a;
+		type int : b;
+	endrecord
+	record #self
+		type int : a;
+		type #self : again; %? error: recursive type: field again of #self has type #self
+	endrecord
+	record #ra
+		type int : a;
+		type #rb : b;
+	endrecord
+	record #rb
+		type int : a;
+		type #ra : b; %? error: recursive type: field b of #rb has type #ra, which contains #rb
+	endrecord
+	record #bad
+		type #nowhere : a; %? error: undefined type #nowhere for field a of #bad
+		type int : b;
+	endrecord
+	definetype record #missing as #m %? error: undefined type #missing in definetype
+	definetype union #pt as #pu %? error: definetype union #pt: #pt is a record
+	definetype record #pt as #bad %? error: type name #bad is already defined at line 23
+	type #ghost : b2; %? error: undefined type #ghost
+	type union #pt : b3; %? error: #pt is a record, not a union
+	return;
+end

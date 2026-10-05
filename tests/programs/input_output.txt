@@ -1,0 +1,30 @@
+% read and write of ints, reals and records (one field per value).
+%? stdin: -17
+%? stdin: 3.75
+%? stdin: 1.25 7
+%? stdin: 2.5e1 -3
+%? stdout: -17
+%? stdout: 3.75
+%? stdout: 1.25 7
+%? stdout: 25.00
+%? stdout: -3
+_main
+	record #pair
+		type real : x;
+		type int : n;
+	endrecord
+	type int : b2;
+	type real : c2;
+	type #pair : d2;
+	read(b2);
+	write(b2);
+	read(c2);
+	write(c2);
+	read(d2);
+	write(d2);
+	read(d2.x);
+	read(d2.n);
+	write(d2.x);
+	write(d2.n);
+	return;
+end

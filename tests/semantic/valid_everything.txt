@@ -1,0 +1,57 @@
+%? ok
+% A program that uses every construct correctly.
+_scale input parameter list [record #vec b2, real c2]
+output parameter list [record #vec b3];
+	b3 <--- b2 * c2;
+	return [b3];
+end
+
+_stats input parameter list [int b2, int b3]
+output parameter list [int b4, int b5, real c4];
+	b4 <--- b2 + b3;
+	b5 <--- b2 * b3;
+	c4 <--- (b2 + b3) / 2.00;
+	return [b4, b5, c4];
+end
+
+_main
+	record #vec
+		type real : x;
+		type real : y;
+	endrecord
+	union #payload
+		type int : count;
+		type #vec : at;
+	endunion
+	record #tagged
+		type int : tag;
+		type #payload : body;
+	endrecord
+	definetype record #vec as #v
+	definetype union #payload as #pl
+	type #v : d2;
+	type record #vec : d3;
+	type #tagged : d4;
+	type int : b2;
+	type int : b3;
+	type int : b7 : global;
+	type real : c2;
+	read(b2);
+	read(c2);
+	d2.x <--- 1.00;
+	d2.y <--- c2;
+	[d3] <--- call _scale with parameters [d2, c2];
+	[b3, b7, c2] <--- call _stats with parameters [b2, b2];
+	d4.tag <--- 1;
+	d4.body.at <--- d3;
+	if ((b3 > 0) &&& (~(c2 == 0.00))) then
+		write(d3);
+	else
+		write(d4.body.count);
+	endif
+	while ((b2 < 100) @@@ (b2 == 0))
+		b2 <--- b2 * 2 + 1;
+	endwhile
+	write(b2);
+	return;
+end

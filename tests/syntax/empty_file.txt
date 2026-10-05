@@ -1,0 +1,2 @@
+% Nothing but a comment: a program needs at least _main.
+%? syntax-error

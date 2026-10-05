@@ -1,0 +1,23 @@
+% ints are 64-bit; INT64_MIN / -1 wraps instead of trapping.
+%? stdout: 9223372036854775807
+%? stdout: -9223372036854775808
+%? stdout: -9223372036854775808
+%? stdout: 1
+%? stdout: -9223372036854775808
+_main
+	type int : b2;
+	type int : b3;
+	type int : b4;
+	b2 <--- 9223372036854775807;
+	write(b2);
+	b2 <--- 0 - 9223372036854775807 - 1;
+	write(b2);
+	b3 <--- 0 - 1;
+	b4 <--- b2 / b3;
+	write(b4);
+	b4 <--- b2 / b2;
+	write(b4);
+	b4 <--- b2 * b3;
+	write(b4);
+	return;
+end

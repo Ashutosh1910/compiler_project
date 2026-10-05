@@ -1,0 +1,54 @@
+% Sum, factorial, nested loops and a loop that never runs.
+%? stdout: 55
+%? stdout: 3628800
+%? stdout: 36
+%? stdout: 0
+%? stdout: 89
+_main
+	type int : b2;
+	type int : b3;
+	type int : b4;
+	type int : b5;
+	type int : b6;
+	b2 <--- 1;
+	b3 <--- 0;
+	while (b2 <= 10)
+		b3 <--- b3 + b2;
+		b2 <--- b2 + 1;
+	endwhile
+	write(b3);
+	b2 <--- 1;
+	b3 <--- 1;
+	while (b2 <= 10)
+		b3 <--- b3 * b2;
+		b2 <--- b2 + 1;
+	endwhile
+	write(b3);
+	b2 <--- 0;
+	b4 <--- 0;
+	while (b2 < 6)
+		b3 <--- 0;
+		while (b3 < 6)
+			b4 <--- b4 + 1;
+			b3 <--- b3 + 1;
+		endwhile
+		b2 <--- b2 + 1;
+	endwhile
+	write(b4);
+	b5 <--- 0;
+	while (b5 > 0)
+		b5 <--- b5 + 1;
+	endwhile
+	write(b5);
+	b2 <--- 1;
+	b3 <--- 1;
+	b6 <--- 0;
+	while (b6 < 9)
+		b4 <--- b2 + b3;
+		b2 <--- b3;
+		b3 <--- b4;
+		b6 <--- b6 + 1;
+	endwhile
+	write(b3);
+	return;
+end

@@ -1,0 +1,34 @@
+% Calls must match the callee's signature exactly (no int/real conversion).
+_two input parameter list [int b2, real c2]
+output parameter list [int b3, real c3];
+	b3 <--- b2;
+	c3 <--- c2;
+	return [b3, c3];
+end
+
+_none input parameter list [int b2];
+	write(b2);
+	return;
+end
+
+_main
+	type int : b5;
+	type real : c5;
+	type int : b6;
+	type real : c6;
+	[b6, c6] <--- call _two with parameters [b5, c5];
+	[b6, c6] <--- call _two with parameters [b5]; %? error: function _two expects 2 input parameter(s), but 1 given
+	[b6, c6] <--- call _two with parameters [c5, c5]; %? error: input parameter 1 of _two must have type int, but c5 has type real
+	[b6, c6] <--- call _two with parameters [b5, b5]; %? error: input parameter 2 of _two must have type real, but b5 has type int
+	[b6] <--- call _two with parameters [b5, c5]; %? error: function _two returns 2 value(s), but 1 variable(s) receive them
+	[c6, b6] <--- call _two with parameters [b5, c5]; %? error: output parameter 1 of _two has type int, but c6 has type real %? error: output parameter 2 of _two has type real, but b6 has type int
+	call _none with parameters [b5];
+	[b6] <--- call _none with parameters [b5]; %? error: function _none returns 0 value(s), but 1 variable(s) receive them
+	call _two with parameters [b5, c5]; %? error: function _two returns 2 value(s), but 0 variable(s) receive them
+	call _nothere with parameters [b5]; %? error: function _nothere is not defined
+	[b6, c6] <--- call _two with parameters [b5, d7]; %? error: variable d7 is not declared
+	while (b6 < 10)
+		[b6, c6] <--- call _two with parameters [b5, c5];
+	endwhile
+	return;
+end

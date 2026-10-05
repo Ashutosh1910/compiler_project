@@ -1,0 +1,19 @@
+% read needs a variable; write accepts constants too.
+_main
+	record #pt
+		type real : x;
+		type int : y;
+	endrecord
+	type #pt : d2;
+	type int : b2;
+	read(b2);
+	read(d2);
+	read(d2.x);
+	write(d2);
+	write(5);
+	write(2.50);
+	read(5); %? error: read needs a variable, not the constant 5
+	read(2.50); %? error: read needs a variable, not the constant 2.50
+	read(d2.z); %? error: d2 (type #pt) has no field named z
+	return;
+end

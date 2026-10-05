@@ -1,0 +1,17 @@
+% Globals are visible in every function, even ones defined before the
+% declaration, so no parameter or local anywhere may reuse their names.
+_f input parameter list [int b5] %? error: b5 is already declared as a global variable at line 11
+output parameter list [int b3];
+	type int : c5; %? error: c5 is already declared as a global variable at line 12
+	b3 <--- 1;
+	return [b3];
+end
+
+_main
+	type int : b5 : global;
+	type int : c5 : global;
+	type int : b3;
+	b5 <--- 1;
+	[b3] <--- call _f with parameters [b5];
+	return;
+end

@@ -1,0 +1,14 @@
+% Integer division by zero stops the program with an error message.
+%? stdout: 1
+%? stdout: Runtime error: division by zero
+%? exit: 1
+_main
+	type int : b2;
+	type int : b3;
+	b2 <--- 1;
+	b3 <--- 0;
+	write(b2);
+	b2 <--- (b2 + 1) * (b2 / b3);
+	write(b2);
+	return;
+end

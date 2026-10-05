@@ -1,0 +1,9 @@
+_f input parameter list [int b2];
+	write(b2);
+	return;
+end
+_main
+	type int : b2;
+	call _f with [b2]; %? syntax-error
+	return;
+end

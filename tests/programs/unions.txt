@@ -1,0 +1,42 @@
+% Variant records: all members of a union share the same storage.
+%? stdout: 1
+%? stdout: 42
+%? stdout: 2
+%? stdout: 3.50 7.25
+%? stdout: 7.25
+%? stdout: 3.50 7.25
+%? stdout: 42
+_main
+	record #pt
+		type real : x;
+		type real : y;
+	endrecord
+	union #val
+		type int : count;
+		type #pt : at;
+	endunion
+	record #tagged
+		type int : tag;
+		type #val : v;
+	endrecord
+	type #tagged : d2;
+	type #tagged : d3;
+	type #pt : d4;
+	d2.tag <--- 1;
+	d2.v.count <--- 42;
+	write(d2.tag);
+	write(d2.v.count);
+	d3 <--- d2;
+	d2.tag <--- 2;
+	d4.x <--- 3.50;
+	d4.y <--- 7.25;
+	d2.v.at <--- d4;
+	write(d2.tag);
+	write(d2.v.at);
+	% count overlaps at.x; at.y lies past it
+	write(d2.v.at.y);
+	d4 <--- d2.v.at;
+	write(d4);
+	write(d3.v.count);
+	return;
+end

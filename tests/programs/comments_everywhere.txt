@@ -1,0 +1,11 @@
+% Comments may appear anywhere a line can end.
+%? stdout: 3
+_main % main starts here
+	type int : b2; % declaration
+	% a full-line comment
+	b2 <--- 1 + % comment in the middle of an expression
+		2;
+	write(b2); % done
+	return; % bye
+end % the end
+% trailing comment without a newline at the end of the file

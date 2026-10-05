@@ -1,0 +1,10 @@
+% Panic-mode recovery keeps going after the first error.
+_main
+	type int : b2;
+	b2 <--- ; %? syntax-error
+	b2 <--- b2 + 1;
+	write(b2; %? syntax-error
+	read b2); %? syntax-error
+	if b2 < 3 then write(b2); endif %? syntax-error
+	return;
+end

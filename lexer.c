@@ -25,6 +25,7 @@ TokenList newTokenList(int initialCapacity) {
 void printError(const char *msg) { perror(msg); }
 
 void printLexerError(const char *msg, State *s) {
+  s->errorCount++;
   printf("[LEXER-ERROR] at line %d: %s\n", s->line, msg);
 }
 
@@ -122,7 +123,8 @@ State initializeState(const char *fileName,int logging) {
   if (!file)
     printError("File not found");
   State s = {.file = file,
-             .isAtEnd = 0,
+             .isAtEnd = (file == NULL),
+             .errorCount = (file == NULL),
              .line = 1,
              .scanNext = 1,
              .tokenList = newTokenList(10),
@@ -148,7 +150,8 @@ void appendToTokenList(Token c, State* s) {
 
 TokenList scan(State *s) {
 
-  char c;
+  // int (not char) so that EOF is distinguishable on every platform
+  int c = 0;
 
   while (!s->isAtEnd) {
     if (s->scanNext)
@@ -164,6 +167,7 @@ TokenList scan(State *s) {
     }
     case ' ':
     case '\t':
+    case '\r': // tolerate Windows line endings
       break;
     case '+': {
       appendToTokenList(newToken(TK_PLUS, s),s);
@@ -279,7 +283,6 @@ TokenList scan(State *s) {
       break;
 
     case '#':
-      printf("");
       Token rtoken = newToken(TK_RUID, s);
       do {
         rtoken.lexeme[rtoken.lexemeSize++] = c;
@@ -306,7 +309,6 @@ TokenList scan(State *s) {
       break;
 
     case '_':
-      printf("");
       Token fun = newToken(TK_FUNID, s);
       do {
         fun.lexeme[fun.lexemeSize++] = c;
@@ -370,10 +372,13 @@ TokenList scan(State *s) {
       break;
     case '%':
       appendToTokenList(newToken(TK_COMMENT, s),s);
-      while (c != '\n') {
+      while (c != '\n' && c != EOF) {
         c = fgetc(s->file);
       }
-      s->line++;
+      if (c == '\n')
+        s->line++;
+      else
+        s->isAtEnd = 1;
       break;
 
     case EOF: {
@@ -426,6 +431,11 @@ TokenList scan(State *s) {
                       c = fgetc(s->file);
                       if (isNum(c)) {
                         num.lexeme[num.lexemeSize++] = c;
+                      } else {
+                        // the exponent needs exactly two digits
+                        printLexerError("expected number after E", s);
+                        s->scanNext = 0;
+                        break;
                       }
                     } else {
                       printLexerError("expected number after E", s);
@@ -496,8 +506,11 @@ TokenList scan(State *s) {
               break;
             }
           } else {
+            // a lone b, c or d is a one-letter field name
             s->scanNext = 0;
-            printLexerError("expected [a-z]|[2-7]", s);
+            var.type = TK_FIELDID;
+            var.lexeme[var.lexemeSize] = '\0';
+            appendToTokenList(var, s);
             break;
           }
         }
@@ -527,22 +540,29 @@ TokenList scan(State *s) {
         var.lexeme[var.lexemeSize] = '\0';
         appendToTokenList(var,s);
       } else {
-        printf("[LEXER-ERROR] at line %d: %c not recognized\n", s->line, c);
+        char msg[32];
+        snprintf(msg, sizeof(msg), "%c not recognized", c);
+        printLexerError(msg, s);
       }
     }
   }
   appendToTokenList(newToken(TK_DOLLAR,s),s);
-  fclose(s->file);
+  if (s->file)
+    fclose(s->file);
+  s->file = NULL;
   return s->tokenList;
 }
 
 void removeComments(const char *filename) {
   State state = initializeState(filename,0);
-  char c;
+  free(state.tokenList.buf);
+  if (!state.file)
+    return;
+  int c = 0;
   while (c != EOF) {
     c = fgetc(state.file);
     if (c == '%') {
-      while (c != '\n') {
+      while (c != '\n' && c != EOF) {
         c = fgetc(state.file);
       }
     }
@@ -560,6 +580,7 @@ void printTokens(const char *filename) {
   State state = initializeState(filename,1);
 
   TokenList tl = scan(&state);
+  free(tl.buf);
 
   printf("done\n");
 }

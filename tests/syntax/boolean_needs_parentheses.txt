@@ -1,0 +1,8 @@
+% Operands of &&& must each be in parentheses.
+_main
+	type int : b2;
+	if (b2 < 3 &&& b2 > 1) then %? syntax-error
+		write(b2);
+	endif
+	return;
+end

@@ -1,0 +1,54 @@
+% Relational operators take scalars; a while loop must update a variable of
+% its condition somewhere in its body.
+_main
+	record #pt
+		type real : x;
+		type real : y;
+	endrecord
+	type #pt : d2;
+	type int : b2;
+	type real : c2;
+	if (d2 < b2) then %? error: relational operator < needs int or real operands, not #pt and int
+		write(b2);
+	endif
+	if ((b2 < 3) &&& (c2 == d2)) then %? error: relational operator == needs int or real operands
+		write(b2);
+	endif
+	if (b2 < 2.50) then
+		write(b2);
+	endif
+	while (b2 < 10)
+		b2 <--- b2 + 1;
+	endwhile
+	while ((b2 < 10) @@@ (c2 > 1.00))
+		c2 <--- c2 - 1.00;
+	endwhile
+	while (b2 < 10) %? error: none of the variables in the while condition is updated inside the loop
+		write(b2);
+	endwhile
+	while (5 < 10) %? error: none of the variables in the while condition is updated
+		b2 <--- 1;
+	endwhile
+	while (~(b2 >= 10))
+		read(b2);
+	endwhile
+	while (b2 < 10)
+		if (c2 > 0.00) then
+			c2 <--- 0.00;
+		else
+			b2 <--- b2 + 2;
+		endif
+	endwhile
+	while (d2.x < 5.00)
+		d2.y <--- 1.00;
+	endwhile
+	while (b2 < 10) %? error: none of the variables in the while condition is updated
+		while (c2 < 1.00)
+			c2 <--- c2 + 0.50;
+		endwhile
+	endwhile
+	while (b2 < c4) %? error: variable c4 is not declared
+		write(b2);
+	endwhile
+	return;
+end

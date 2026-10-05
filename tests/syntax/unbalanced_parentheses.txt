@@ -1,0 +1,6 @@
+_main
+	type int : b2;
+	b2 <--- ((b2 + 1) * 2; %? syntax-error
+	b2 <--- (b2 + 1)); %? syntax-error
+	return;
+end

@@ -1,0 +1,68 @@
+% Field-by-field record arithmetic.
+%? stdout: 4.00 6.00
+%? stdout: 2.00 3.00
+%? stdout: 3.00 4.50
+%? stdout: 3.00 4.50
+%? stdout: 0.75 1.12
+%? stdout: 1.00 0.67
+%? stdout: 3 4
+%? stdout: 9 12
+%? stdout: 9.00 13.50 3.00 4.50
+%? stdout: 6.00 9.00
+_main
+	record #pt
+		type real : x;
+		type real : y;
+	endrecord
+	record #ipt
+		type int : x;
+		type int : y;
+	endrecord
+	record #seg
+		type #pt : a;
+		type #pt : b;
+	endrecord
+	type #pt : d2;
+	type #pt : d3;
+	type #pt : d5;
+	type #ipt : d4;
+	type #seg : d6;
+	type #seg : d7;
+	type int : b2;
+	type real : c2;
+	d2.x <--- 1.00;
+	d2.y <--- 1.50;
+	d3.x <--- 3.00;
+	d3.y <--- 4.50;
+	d5 <--- d2 + d3;
+	write(d5);
+	d5 <--- d3 - d2;
+	write(d5);
+	d5 <--- d2 * 3;
+	write(d5);
+	b2 <--- 3;
+	d5 <--- b2 * d2;
+	write(d5);
+	c2 <--- 4.00;
+	d5 <--- d3 / c2;
+	write(d5);
+	d5.x <--- 6.00;
+	d5.y <--- 4.00;
+	% every field is divided by the OLD value of d5.x
+	d5 <--- d5 / d5.x;
+	write(d5);
+	d4.x <--- 7;
+	d4.y <--- 9;
+	d4 <--- d4 / 2;
+	write(d4);
+	d4 <--- d4 * 3;
+	write(d4);
+	d6.a <--- d3;
+	d6.b <--- d2;
+	d7 <--- d6;
+	d7 <--- d6 * 2 + d7 + d6 - d6 / 2 * 2;
+	write(d7);
+	d5 <--- (d2 + d3) * 2 - d3 / 0.50 * 0.50 + d2;
+	write(d5);
+	return;
+end

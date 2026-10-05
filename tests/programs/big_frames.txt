@@ -1,0 +1,50 @@
+% Many locals and wide records.
+%? stdout: 1 2 3 4 5 6 7 8 9 10 11 12
+%? stdout: 78
+%? stdout: 2 4 6 8 10 12 14 16 18 20 22 24
+_sum input parameter list [record #wide b2]
+output parameter list [int b3];
+	b3 <--- b2.p.a + b2.p.b + b2.p.c + b2.p.d + b2.q.a + b2.q.b + b2.q.c + b2.q.d + b2.r.a + b2.r.b + b2.r.c + b2.r.d;
+	return [b3];
+end
+
+_main
+	record #four
+		type int : a;
+		type int : b;
+		type int : c;
+		type int : d;
+	endrecord
+	record #wide
+		type #four : p;
+		type #four : q;
+		type #four : r;
+	endrecord
+	type #wide : d2;
+	type #wide : d3;
+	type int : b2;
+	type int : b3;
+	type int : b4;
+	type int : b5;
+	type int : b6;
+	type int : b7;
+	type int : c2b;
+	d2.p.a <--- 1;
+	d2.p.b <--- 2;
+	d2.p.c <--- 3;
+	d2.p.d <--- 4;
+	d2.q.a <--- 5;
+	d2.q.b <--- 6;
+	d2.q.c <--- 7;
+	d2.q.d <--- 8;
+	d2.r.a <--- 9;
+	d2.r.b <--- 10;
+	d2.r.c <--- 11;
+	d2.r.d <--- 12;
+	write(d2);
+	[b2] <--- call _sum with parameters [d2];
+	write(b2);
+	d3 <--- d2 + d2;
+	write(d3);
+	return;
+end

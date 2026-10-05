@@ -1,0 +1,7 @@
+%? stdout: 4
+_main
+	type int : b2;
+	b2 <--- 4;
+	write(b2);
+	return;
+end

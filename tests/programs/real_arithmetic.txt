@@ -1,0 +1,41 @@
+%? stdout: 10.00
+%? stdout: 5.00
+%? stdout: 18.75
+%? stdout: 3.00
+%? stdout: 0.33
+%? stdout: 0.67
+%? stdout: 123.40
+%? stdout: 1.23
+%? stdout: -1.25
+%? stdout: 5.00
+%? stdout: 0.00
+_main
+	type real : c2;
+	type real : c3;
+	type real : c4;
+	c2 <--- 7.50;
+	c3 <--- 2.50;
+	c4 <--- c2 + c3;
+	write(c4);
+	c4 <--- c2 - c3;
+	write(c4);
+	c4 <--- c2 * c3;
+	write(c4);
+	c4 <--- c2 / c3;
+	write(c4);
+	c4 <--- 1.00 / 3.00;
+	write(c4);
+	c4 <--- 2.00 / 3.00;
+	write(c4);
+	c4 <--- 12.34E+01;
+	write(c4);
+	c4 <--- 12.34E-01;
+	write(c4);
+	c4 <--- 0.00 - 1.25;
+	write(c4);
+	c4 <--- 10.00 - 2.00 - 3.00;
+	write(c4);
+	c4 <--- 12.34E-99;
+	write(c4);
+	return;
+end

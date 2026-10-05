@@ -1,0 +1,29 @@
+% int operands are converted to real only where an operator meets a real;
+% int / int stays integer division.
+%? stdout: 3.00
+%? stdout: 1.00
+%? stdout: 1.50
+%? stdout: 2.50
+%? stdout: 6.00
+%? stdout: 6.00
+%? stdout: 3.50
+_main
+	type int : b2;
+	type real : c2;
+	b2 <--- 3;
+	c2 <--- b2;
+	write(c2);
+	c2 <--- b2 / 2;
+	write(c2);
+	c2 <--- b2 / 2.00;
+	write(c2);
+	c2 <--- b2 * 0.50 + 1;
+	write(c2);
+	c2 <--- (b2 + 1) * 1.50;
+	write(c2);
+	c2 <--- 7 / 2 * 2.00;
+	write(c2);
+	c2 <--- 7 / 2.00;
+	write(c2);
+	return;
+end

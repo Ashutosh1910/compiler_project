@@ -33,6 +33,8 @@ Symbol makeSymbol(Grammar *g, const char *tok);
 void addRule(Grammar *g, int lhsNT, Symbol *rhs, int rhsLen);
 
 // grammar loading
+void setGrammarFile(const char *path);
+const char *getGrammarFile(void);
 Grammar *loadGrammar(const char *filename);
 void freeGrammar(Grammar *g);
 const char *getNTName(Grammar *g, int ntIndex);

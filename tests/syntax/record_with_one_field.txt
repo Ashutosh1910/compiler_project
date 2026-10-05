@@ -1,0 +1,7 @@
+% A record or union needs at least two fields.
+_main
+	record #single
+		type int : a;
+	endrecord %? syntax-error
+	return;
+end

@@ -1,0 +1,5 @@
+_main
+	type int : b2;
+	5 <--- b2; %? syntax-error
+	return;
+end

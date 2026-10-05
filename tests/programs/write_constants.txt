@@ -1,0 +1,11 @@
+%? stdout: 42
+%? stdout: 3.14
+%? stdout: 0
+%? stdout: 1234.00
+_main
+	write(42);
+	write(3.14);
+	write(0);
+	write(12.34E+02);
+	return;
+end
