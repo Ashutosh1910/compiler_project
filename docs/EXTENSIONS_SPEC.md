@@ -122,24 +122,27 @@ is **not** allowed (write `'\t'`).
 
 DFA (c1, c2, c3 are the bytes read after the opening quote; "consume" means the
 byte is part of the literal; "leave" means `s->scanNext = 0` so the byte is
-processed next by the main loop, which keeps line counting right):
+processed next by the main loop, which keeps line counting right). "End of
+line" means LF (0x0A) **or CR (0x0D)**: a CR is treated exactly like LF inside
+literals, so on a CRLF line an unterminated literal gives one error and the CR
+and LF are then skipped as whitespace by the main loop:
 
 1. Read c1.
-   * c1 is EOF or `\n`: error `unterminated character literal`; leave c1. No token.
+   * c1 is EOF or end of line: error `unterminated character literal`; leave c1. No token.
    * c1 is `'`: error `empty character literal` (both quotes consumed). No token.
    * c1 is `\`: read c2.
      * c2 in `n t r 0 \ ' "`: value from the table; go to step 2.
-     * c2 is EOF or `\n`: error `unterminated character literal`; leave c2. No token.
+     * c2 is EOF or end of line: error `unterminated character literal`; leave c2. No token.
      * otherwise: error `unknown escape sequence \<X> in character literal`; go to SKIP.
    * c1 printable (and not `'`, `\`): value = c1; go to step 2.
-   * otherwise (control byte, tab, byte >= 0x80): error
+   * otherwise (control byte other than LF/CR, tab, byte >= 0x80): error
      `byte \x<HH> not allowed in character literal`; go to SKIP.
 2. Read c3.
    * c3 is `'`: emit `TK_CHARLIT` with the spelling as lexeme.
-   * c3 is EOF or `\n`: error `unterminated character literal`; leave c3. No token.
+   * c3 is EOF or end of line: error `unterminated character literal`; leave c3. No token.
    * otherwise: error `character literal must contain exactly one character`;
      go to SKIP.
-3. SKIP: read bytes until `'` (consumed) or until `\n`/EOF (left). No further
+3. SKIP: read bytes until `'` (consumed) or until end of line/EOF (left). No further
    errors are reported for this literal, and no token is emitted.
 
 `<X>` in an escape message is the byte after the backslash printed as itself
@@ -170,14 +173,15 @@ is valid.
 DFA: after the opening quote, loop:
 
 * `"`: end of literal.
-* EOF or `\n`: error `unterminated string literal`; leave the byte; stop. No token.
+* EOF or end of line (LF or CR, as in A.1.3): error `unterminated string literal`; leave the byte; stop. No token.
 * `\`: read the next byte b.
   * b in `n t r \ " '`: append the decoded byte.
-  * b is EOF or `\n`: error `unterminated string literal`; leave b; stop. No token.
+  * b is EOF or end of line: error `unterminated string literal`; leave b; stop. No token.
   * otherwise: error `unknown escape sequence \<X> in string literal`
     (`<X>` as in A.1.3); nothing is appended; continue.
 * printable byte: append it.
-* any other byte: error `byte \x<HH> not allowed in string literal`; continue.
+* any other byte (control byte other than LF/CR, tab, byte >= 0x80): error
+  `byte \x<HH> not allowed in string literal`; continue.
 
 Appending a byte when 255 bytes are already decoded reports
 `string literal longer than 255 characters` once for this literal and stops
@@ -220,8 +224,8 @@ table owned by the lexer:
 `removeComments` must not treat `%` inside a string or character literal as
 a comment: when it copies a `"` or `'`, it copies bytes verbatim up to and
 including the matching closing quote, where a backslash copies the following
-byte unconditionally, and the literal also ends (without consuming it) at
-`\n` or EOF.
+byte unconditionally unless that byte is LF, CR or EOF, and the literal also
+ends (without consuming the byte) at LF, CR or EOF.
 
 ---
 
@@ -450,6 +454,18 @@ indexing, `<var>` already covers what a scanner needs (`c2[b3] == '\n'`).
 `boolExpr` follow sets unchanged.) `test_grammar_is_ll1` and
 `test_parse_table` need no change and must pass.
 
+`test_bitset` hard-codes bit numbers that the enlarged enum moves (`TK_EPS`
+becomes 63 and `NUM_TOKENS - 1` becomes 65). Change exactly two lines:
+
+```c
+  CHECK(!bs_contains(&a, 1) && !bs_contains(&a, 62));   // line 149, was 65
+  CHECK(bs_contains(&c, 64));                           // line 158, was 63
+```
+
+(line 149: bits 0, 63, 64 and 65 are now set, so 65 can no longer be the
+"absent" probe; line 158: bit 63 is `TK_EPS`, which `bs_union_no_eps`
+removes, so the surviving bit to probe is 64.)
+
 ---
 
 ## A.3 Character literals
@@ -618,8 +634,17 @@ Static semantics:
   name (for an alias, the defined record's name). This message replaces the
   union-variable message for `type #u[3] : b2;`. An undefined element type
   gives only the existing `undefined type <name>`.
-* After either error the variable is declared with the error type (size 8),
-  so its uses are silent.
+* Both checks are made, length first: `type #pt[0] : b2;` reports
+  `array length must be between 1 and 131072, not 0` and then
+  `array element type must be int or real, not #pt` (both on the line of the
+  declaration). With an alias of a record as element type
+  (`definetype record #pt as #ali` ... `type #ali[2] : b3;`) the message names
+  the record: `array element type must be int or real, not #pt`. An undefined
+  element type (`type #zz[3] : b5;`) reports only `undefined type #zz` (plus the
+  length message if the length is also wrong).
+* After any of these errors the variable is declared with the error type
+  (size 8), so its uses are silent: indexing it, using it in expressions or
+  assigning to it reports nothing more.
 * Arrays are allowed only in `<declaration>`: as locals (in any function,
   including recursive ones) and as globals. They cannot be parameters
   (`<parameter_list>` takes a plain `<dataType>`: syntax error), record or
@@ -651,8 +676,12 @@ first).
 Static semantics:
 * The variable must be an array: else `<name> is not an array (it has type <type>)`
   (e.g. `b3 is not an array (it has type int)`); an undeclared name gives only
-  `variable <name> is not declared` (once per function, as today). The index
-  is still checked in both cases.
+  `variable <name> is not declared` (once per function, as today); a variable
+  whose type is already the error type (failed declaration) reports nothing.
+  The index is still checked in all three cases, and the access then has the
+  **error type**, which suppresses every follow-on message for it (e.g.
+  `b7 <--- b7[0] + 1.50;` with `b7` an int reports only
+  `b7 is not an array (it has type int)`, no type mismatch).
 * The index must have type `int` (a char literal is an int): else
   `array index must be an int expression, not <type>`.
 * The type of the access is the element type. All existing rules apply:
@@ -806,9 +835,23 @@ callee but excluding the callee's own use.
    `<f> needs about <use> bytes of stack, counting the functions it calls; the limit is 6291456`
    is reported at f's line when `use(f) > MAX_STACK_USE`, unless some callee
    already exceeds it (existing suppression).
-4. For unbounded f: report
-   `<f> needs about <need> bytes of stack for a single call; the limit is 6291456`
-   at f's line when `need(f) > MAX_STACK_USE`.
+4. For unbounded f compute
+   `single(f) = 16 + localSize(f) + max(temp(f), max over calls f→g with g bounded of (paramSize(g) + use(g)), max over calls f→g with g unbounded of paramSize(g))`
+   — one activation of f plus the full use of every bounded callee (each
+   unbounded callee is checked on its own and at run time) — and report
+   `<f> needs about <single> bytes of stack for a single call; the limit is 6291456`
+   at f's line (the line of its `TK_FUNID`, or of `_main`) when
+   `single(f) > MAX_STACK_USE`. Unbounded functions are processed after all
+   bounded ones, so every `use(g)` needed is known. If a bounded callee itself
+   exceeds the limit, this message is still reported for f (the callee has its
+   own message). Example (`tests/semantic/stack_mixed.txt`): `_main` with
+   three `int[131072]` arrays and two int locals (`localSize` 3145744) that
+   calls a recursive `_h` (16-byte block) and a bounded `_g` (16-byte block,
+   three `int[131072]` locals, `use(_g)` = 16 + 3145728 + 8016 = 3153760)
+   gives
+   `_main needs about 6299536 bytes of stack for a single call; the limit is 6291456`
+   (`16 + 3145744 + 16 + 3153760`), although each function alone is within
+   the limits.
 
 For every currently valid program the call graph is acyclic and every
 function is bounded, so the results are identical to today.
@@ -878,7 +921,12 @@ loop`) and its overlap logic, with these changes:
   * `print`, `writechar`, `exit`, `write`: nothing.
 * The check is skipped when any variable of the condition, including inside
   index expressions, failed to resolve (`condHasUndeclared` must recurse into
-  index expressions).
+  index expressions), **and** when any relational operand of the condition
+  has the error type — e.g. a bare array (`while (c2 == 0)`, which reports
+  only `array c2 cannot be used without an index`) or an index on a non-array
+  (`while (b3[0] < 1)`, only `b3 is not an array (it has type int)`), or a
+  too-deep operand. So the while message never adds to another error in the
+  same condition.
 
 ---
 
@@ -892,7 +940,10 @@ loop`) and its overlap logic, with these changes:
   checked for every expression root: assignment right-hand side (existing),
   the index of an assignment target, each relational operand, the index of a
   `read`/`write`/`readchar` argument, each print item, the argument of
-  `writechar` and `exit`. At most one such message per root.
+  `writechar` and `exit`. At most one such message per root. A root that is
+  too deep is not type-checked and counts as having the error type, so no
+  other message is reported for it (for the index of a target, the target
+  counts as error-typed: no type-mismatch message).
 * `tempStack` keeps its bound `8 * (MAX_EXPR_DEPTH + 2)`: an element store or
   a relational test adds one 8-byte slot to at most 1000 levels of
   expression temporaries, and `readchar` into an element adds 16 bytes after
@@ -997,7 +1048,8 @@ Every currently valid program keeps its meaning and output:
 * Syntax: only alternatives were added (A.2.1).
 * Semantics: errors were only removed (A.8.1, A.9) or added for constructs
   that did not parse before (arrays, new statements) or that were already
-  errors (the single-call stack check concerns only recursive programs).
+  errors (the single-call stack check concerns only programs with recursion,
+  which were rejected before).
 * Code: the same values are computed and printed; the added stack guard
   provably never fires for programs that pass today's static check (A.8.3).
 
@@ -1010,10 +1062,14 @@ Existing rules that are relaxed, and the files that encode them:
 | static stack limit over the whole call chain | now only for non-recursive chains; recursive ones get a per-activation check + runtime guard | none (`tests/semantic/limits.txt` keeps passing: `_main` is bounded) |
 | while body must update a condition variable | a call statement now updates every global | none (no existing test has a global in a loop condition with a call in the body) |
 | `TK_FIELDID` after `.` and in field definitions | now `<fieldName>` | none |
-| grammar sizes | 53/95/15 → 58/113/17 | `tests/unit/test_units.c` (A.2.3) |
+| grammar sizes | 53/95/15 → 58/113/17 | `tests/unit/test_units.c`: counts and FIRST/FOLLOW arrays (A.2.3) |
+| token numbering (`TK_EPS` 57 → 63, `NUM_TOKENS` 60 → 66) | changed | `tests/unit/test_units.c`: `test_bitset` lines 149 and 158 (A.2.3) |
 
-Nothing else in `tests/` needs to change. `Coding Details` is a submission
-document and is not updated.
+Of the existing files under `tests/`, exactly these change:
+`tests/semantic/call_order.txt` (replaced) and `tests/unit/test_units.c` (the
+edits listed in A.2.3). `tests/run_tests.py` only gains new cases and the toy
+section (Part C); its existing cases are unchanged. `Coding Details` is a
+submission document and is not updated.
 
 ---
 
@@ -1028,7 +1084,7 @@ document and is not updated.
 | global arrays | each at most 1 MiB, no total limit (unchanged rule for globals) |
 | print items per statement | unlimited (`<morePrintItems>` is tail-recursive; the parser stack does not grow) |
 | expression depth | 1000 per expression root; an index level counts 1 |
-| stack | 6 MiB per call chain: static check for non-recursive chains, runtime guard always |
+| stack | 6 MiB: statically, `use(f)` for every non-recursive chain and `single(f)` (one activation plus its non-recursive callees' full use) for functions in or above a recursive cycle (A.8.2); at run time, the stack guard at every function entry (A.8.3) |
 | recursion depth | only the runtime stack guard |
 | exit status | value mod 256 |
 
@@ -1054,14 +1110,14 @@ Lexical (`[LEXER-ERROR] at line N: ...`):
 
 | Message | Cause |
 |---|---|
-| `unterminated character literal` | `\n` or EOF before the closing `'` |
+| `unterminated character literal` | LF, CR or EOF before the closing `'` |
 | `empty character literal` | `''` |
 | `character literal must contain exactly one character` | e.g. `'ab'` |
 | `unknown escape sequence \<X> in character literal` | backslash + byte not in `n t r 0 \ ' "` |
-| `byte \x<HH> not allowed in character literal` | non-printable byte (tab included) after `'` |
-| `unterminated string literal` | `\n` or EOF before the closing `"` |
+| `byte \x<HH> not allowed in character literal` | non-printable byte other than LF/CR (tab included) after `'` |
+| `unterminated string literal` | LF, CR or EOF before the closing `"` |
 | `unknown escape sequence \<X> in string literal` | backslash + byte not in `n t r \ " '` (so `\0` too) |
-| `byte \x<HH> not allowed in string literal` | non-printable byte (tab included) in a string |
+| `byte \x<HH> not allowed in string literal` | non-printable byte other than LF/CR (tab included) in a string |
 | `string literal longer than 255 characters` | more than 255 decoded bytes |
 
 Semantic (`[SEMANTIC-ERROR] at line N: ...`; N is the line of the
@@ -1173,7 +1229,10 @@ without braces).
   wrap modulo 2^64. `/` truncates toward zero; `MIN / -1` is `MIN`
   (-9223372036854775808); division by zero is a runtime error. Comparisons are
   signed.
-* Variables are global to the program and hold one integer each. A variable
+* Variables are global to the program and hold one integer each; every
+  variable starts at 0 when the compiled program starts (so
+  `while 0 > 1 { y = 5; } print y;` prints `0`: `y` is defined, B.3 below, but
+  never assigned at run time). A variable
   is *defined* once an assignment statement to it has been parsed completely
   (including its `;`). Using a name in an expression before any such
   assignment precedes it textually is the compile-time error
@@ -1205,11 +1264,14 @@ error matters.
 | `expected '{'` | a block must start (after a condition, after `else`) |
 | `expected '}'` | EOF inside a block |
 | `expected comparison operator` | after the first expression of a condition |
-| `undefined variable <name>` | a NAME in an expression that is not yet defined (B.3) |
+| `undefined variable <name>` | a NAME in an expression (a `primary`) that is not yet defined (B.3); detected while that NAME is the current token, before it is consumed — so before the token after it is scanned |
 
 The error's line is the line of the current token when the error is detected
 (the token at which it is detected; for scanning errors, the line where the
-offending token or byte starts; at EOF, the EOF line of B.1).
+offending token or byte starts; at EOF, the EOF line of B.1). For
+`undefined variable` it is the NAME's line: with the input
+`y = 1;` LF `print x` LF `$` LF the error is `error: 2: undefined variable x`,
+not the lexical error at the `$` on line 3, which is never scanned.
 
 ## B.5 The `toycc` contract
 
@@ -1220,20 +1282,27 @@ Invocation:
 nasm -f elf64 prog.asm -o prog.o && gcc -no-pie prog.o -o prog && ./prog
 ```
 
-* `toycc` reads its whole standard input (until `readchar` gives -1).
+* `toycc` reads standard input with `readchar`; on success it has read up to
+  the end of input. It stops at the first error.
 * Success: exit status 0; stdout is a complete NASM program for x86-64 Linux
   that `nasm -f elf64` (NASM 2.x) accepts and `gcc -no-pie` links against the
   C library (it may use `printf` and `exit`).
 * Error: exit status 1; the **last line** of stdout is exactly
-  `error: <line>: <message>` (B.4) followed by LF. What precedes it on stdout
-  is unspecified (a one-pass compiler may already have written part of the
-  assembly). Nothing is required on stderr. `toycc` must not end in an
+  `error: <line>: <message>` (B.4), it starts at the beginning of a line (if
+  anything was written before it, that output ends with LF), and it ends with
+  LF, which is the last byte of stdout. What precedes it on stdout is
+  otherwise unspecified (a one-pass compiler may already have written part of
+  the assembly; writing every assembly line with a single `print` whose last
+  item ends in `\n` satisfies the rule). Nothing is required on stderr. `toycc` must not end in an
   extended-language runtime error (index out of bounds, stack overflow) for
   inputs within the limits below.
 * Limits that `toycc` must support: any input length; at most 500 distinct
-  variable names; at most 8000 bytes of variable names in total; nesting of
-  parentheses, unary minus and blocks at most 200 deep. Inputs beyond these
-  limits are outside the contract (no acceptance test exceeds them).
+  variable names; at most 8000 bytes of variable names in total (keywords are
+  not variable names); nesting depth at most 200, where the nesting depth of a
+  token is the number of enclosing parentheses, unary minus operators and
+  blocks. Inputs beyond these limits are outside the contract (no acceptance
+  test exceeds them; `limits_names.tl` and `limits_nesting.tl` in C.6 reach
+  them exactly).
 
 The generated program:
 
@@ -1318,7 +1387,12 @@ Each file is stored as `tests/toy/<name>.tl`. Expectations are written as TL
 comments at the top of the file: `#? stdout: <line>` (expected output lines of
 the compiled program, in order), `#? exit: <n>` (its exit status, default 0),
 `#? error: <line>: <message>` (expected toycc error). The annotation lines are
-part of the files, so line numbers below count them.
+part of the files, so line numbers below count them. A file shown as a text
+block consists of exactly the lines shown, each terminated by one LF (so the
+file ends with exactly one LF and has no trailing blank line); line numbers in
+error messages depend on this (e.g. the EOF line of `err_unclosed_block.tl`
+is 5). Files that do not fit this form are given as Python code that writes
+their bytes.
 
 **`tests/toy/print_literals.tl`**
 
@@ -1706,9 +1780,10 @@ Globals (declared in `_main`): `d2` lookahead byte (-1 at end of input); `d3`
 current line; `d4` current token kind (`'0'` number, `'a'` name, `'$'` end of
 input, otherwise the operator byte or a code for a keyword or two-byte
 operator); `d5` number value; `d6` line of the current token; `d2b` index of
-a name token in the name table; `d4b` int[500], 1 once name k has been
-assigned; `d3b` int[8000] bytes of all names; `d3c`, `d3d` int[500] start and
-length of name k. `_fail` has one `if` per message number. `_term` parses
+a name token in the name table; `d4b` int[504], 1 once name k has been
+assigned; `d3b` int[8016] bytes of all names; `d3c`, `d3d` int[504] start and
+length of name k. The table also holds the four keywords as names 0..3
+(16 bytes), hence 500 + 4 entries and 8000 + 16 bytes for the limits of B.5. `_fail` has one `if` per message number. `_term` parses
 `unary { ('*' | '/') unary }` and leaves the value in `rax`.
 
 ```
@@ -1797,15 +1872,15 @@ end
 
 _main
 	type int : d2 : global;
-	type int[500] : d4b : global;               % global arrays (A.7)
-	type int[8000] : d3b : global;
+	type int[504] : d4b : global;               % global arrays (A.7)
+	type int[8016] : d3b : global;
 	% ... d3, d4, d5, d6, d2b, d3c, d3d as described above ...
 	type int : b2;
 	d3 <--- 1;
 	call _keywords with parameters [b2];
 	call _advance with parameters [b2];
 	call _next with parameters [b2];
-	print("default rel\nextern printf, exit\nglobal main\nsection .text\nmain:\n");
+	print("default rel\nextern printf, exit\nglobal main\nsection .text\nmain:\n    push rbp\n    mov rbp, rsp\n");
 	while (d4 != '$')
 		call _stmt with parameters [b2];
 	endwhile
@@ -1822,7 +1897,9 @@ Suggested function list for the complete compiler (non-normative):
 names through `_intern`, mapping indices 0..3 to keyword kinds; one- and
 two-byte operators); `_fail`; `_expect`; `_primary`; `_unary`; `_term`;
 `_expr`; `_cond` (input: the label to jump to when false); `_block`; `_stmt`;
-`_finish` (emits `tl_div`, `.data`, the `.bss` slots `V0..`); `_main`.
+`_finish` (emits the epilogue `xor eax, eax` / `pop rbp` / `ret`, then
+`tl_div`, `.data`, the `.bss` slots `V0..`); `_main` (prints the header and
+the prologue of `main`, as above).
 
 ---
 
@@ -1917,6 +1994,19 @@ Append these cases (Python source, to be pasted into the list):
     ("line numbers after a bad string", '"abc\n"def" b2',
      ['TK_STR "def" @2', "TK_ID b2 @2"],
      [(1, "unterminated string literal")]),
+    ("backslash at end of file in a character literal", "b2 '\\",
+     ["TK_ID b2"], [(1, "unterminated character literal")]),
+    ("backslash before LF in a character literal", "'\\\nb2",
+     ["TK_ID b2 @2"], [(1, "unterminated character literal")]),
+    ("CR ends an unterminated character literal", "'a\r\nb2",
+     ["TK_ID b2 @2"], [(1, "unterminated character literal")]),
+    ("CR ends an unterminated string literal", '"abc\r\nb2',
+     ["TK_ID b2 @2"], [(1, "unterminated string literal")]),
+    ("backslash before CR in a string literal", '"a\\\r\nb2',
+     ["TK_ID b2 @2"], [(1, "unterminated string literal")]),
+    ("literals on CRLF lines", "b2 <--- 'a';\r\nprint(\"x\");\r\n",
+     ["TK_ID b2 @1", "TK_ASSIGNOP", "TK_CHARLIT 'a'", "TK_SEM",
+      "TK_PRINT @2", "TK_OP", 'TK_STR "x"', "TK_CL", "TK_SEM"], []),
     ("apostrophe in a comment", "b2 % it's\nc3",
      ["TK_ID b2 @1", "TK_COMMENT @1", "TK_ID c3 @2"], []),
     ("array declaration", "type int[10] : b2;",
@@ -2235,6 +2325,12 @@ _main
 	while (c2[b3] < 10)
 		[b3] <--- call _same with parameters [b2];
 	endwhile
+	while (c2 == 0) %? error: array c2 cannot be used without an index
+		b3 <--- 1;
+	endwhile
+	while (b3[0] < 1) %? error: b3 is not an array (it has type int)
+		b2 <--- 1;
+	endwhile
 	return;
 end
 ```
@@ -2398,6 +2494,106 @@ _main
 	endif
 	return;
 end
+```
+
+**`tests/semantic/array_declarations.txt`**
+
+```text
+% Array declaration errors, for locals and globals; uses of a variable whose
+% declaration failed are silent, and so is an expression that indexes a
+% non-array.
+_main
+	record #pt
+		type int : x;
+		type int : y;
+	endrecord
+	union #u
+		type int : i;
+		type real : r;
+	endunion
+	definetype record #pt as #ali
+	type #pt[0] : b2; %? error: array length must be between 1 and 131072, not 0 %? error: array element type must be int or real, not #pt
+	type #ali[2] : b3; %? error: array element type must be int or real, not #pt
+	type #u[2] : b4; %? error: array element type must be int or real, not #u
+	type #zz[3] : b5; %? error: undefined type #zz
+	type int[99999999999999999999] : b6; %? error: array length must be between 1 and 131072, not 99999999999999999999
+	type real[007] : c2;
+	type int[0] : d4 : global; %? error: array length must be between 1 and 131072, not 0
+	type #pt[2] : d5 : global; %? error: array element type must be int or real, not #pt
+	type int : b7;
+	b2[1] <--- b3[0] + b4[0];
+	b5[0] <--- b6[1];
+	d4[0] <--- d5[0] + 1;
+	c2[6] <--- 1.50;
+	b7 <--- b7[0] + 1; %? error: b7 is not an array (it has type int)
+	b7 <--- b7[0] + 1.50; %? error: b7 is not an array (it has type int)
+	return;
+end
+```
+
+**`tests/semantic/stack_mixed.txt`**
+
+```text
+% A function that calls a recursive function is checked over one activation
+% plus the whole stack use of its non-recursive callees: 3145744 bytes of
+% locals plus a call of _g (16-byte block, 3153760 bytes of stack) exceed 6 MiB.
+_g input parameter list [int b2];
+	type int[131072] : d2;
+	type int[131072] : d3;
+	type int[131072] : d4;
+	write(b2);
+	return;
+end
+
+_h input parameter list [int b2]
+output parameter list [int b3];
+	[b3] <--- call _h with parameters [b2];
+	return [b3];
+end
+
+_main %? error: _main needs about 6299536 bytes of stack for a single call; the limit is 6291456
+	type int[131072] : d2;
+	type int[131072] : d3;
+	type int[131072] : d4;
+	type int : b2;
+	type int : b3;
+	call _g with parameters [b2];
+	[b3] <--- call _h with parameters [b2];
+	return;
+end
+```
+
+
+**`tests/semantic/depth_new_roots.txt`**
+
+Each annotated line holds an expression 1001 operators deep (`1 + 1 + ... + 1`
+with 1002 ones), so the file is given as the Python code that writes it
+(`python3 gen_depth.py tests/semantic`); every annotated statement reports
+exactly one message, at its own line (5, 6, 9, 10, 11, 12, 13, 14):
+
+```python
+# Writes tests/semantic/depth_new_roots.txt
+import sys, os
+d = sys.argv[1] if len(sys.argv) > 1 else "tests/semantic"
+E = "1" + " + 1" * 1001                     # 1001 operators deep
+M = " %? error: expression is too long or too deeply nested"
+lines = ["% The 1000-operator depth limit applies to every new expression root.",
+         "_main",
+         "\ttype int[2] : b2;",
+         "\ttype int : b3;",
+         "\tb2[" + E + "] <--- 1;" + M,
+         "\tif (b2[" + E + "] < 1) then" + M,
+         "\t\twrite(b3);",
+         "\tendif",
+         "\tread(b2[" + E + "]);" + M,
+         "\twrite(b2[" + E + "]);" + M,
+         "\treadchar(b2[" + E + "]);" + M,
+         "\tprint(\"x\", " + E + ");" + M,
+         "\twritechar(" + E + ");" + M,
+         "\texit(" + E + ");" + M,
+         "\treturn;",
+         "end"]
+open(os.path.join(d, "depth_new_roots.txt"), "w").write("\n".join(lines) + "\n")
 ```
 
 
@@ -2919,6 +3115,110 @@ _main
 end
 ```
 
+**`tests/programs/array_bounds_read.txt`**
+
+```text
+% read into an element checks the index before reading.
+%? stdin: 7
+%? stdout: Runtime error: index 3 out of bounds for array c2 of length 3 at line 9
+%? exit: 1
+_main
+	type int[3] : c2;
+	type int : b2;
+	b2 <--- 3;
+	read(c2[b2]);
+	write(c2[0]);
+	return;
+end
+```
+
+**`tests/programs/array_bounds_readchar.txt`**
+
+```text
+% readchar into an element checks the index before reading.
+%? stdin: x
+%? stdout: Runtime error: index -1 out of bounds for array c2 of length 3 at line 9
+%? exit: 1
+_main
+	type int[3] : c2;
+	type int : b2;
+	b2 <--- 3;
+	readchar(c2[b2 - 4]);
+	write(c2[0]);
+	return;
+end
+```
+
+**`tests/programs/real_array.txt`**
+
+```text
+% Elements of a real array: int values are converted on store; reals print
+% with two decimals.
+%? stdout: 3.00
+%? stdout: 1.50
+%? stdout: 4.50|-0.25
+%? stdout: 1
+_main
+	type real[3] : c2;
+	type int : b2;
+	c2[1] <--- 3;
+	b2 <--- 2;
+	c2[b2] <--- c2[1] / b2;
+	write(c2[1]);
+	write(c2[2]);
+	c2[0] <--- 0.25 - c2[0] - 0.50;
+	print(c2[1] + c2[2], "|", c2[0], "\n");
+	if (c2[2] < 2) then
+		write(1);
+	else
+		write(0);
+	endif
+	return;
+end
+```
+
+**`tests/programs/print_percent.txt`**
+
+```text
+% A % inside a string or character literal is not a comment, and print
+% writes strings literally (no printf formatting).
+%? stdout: 100% %d %s %%
+%? stdout: %
+_main
+	type int : b2;
+	b2 <--- 100;
+	print(b2, "% %d %s %%\n"); % trailing comment
+	writechar('%');
+	writechar('\n');
+	return;
+end
+```
+
+
+For `array_bounds_read.txt` and `array_bounds_readchar.txt` the index is
+checked before input is read (A.4, A.7.3); whether input was consumed cannot
+be observed once the program has stopped, so these tests check the message,
+the line and the status.
+
+Two more tests go into `add_program_tests` (skipped when `CAN_RUN` is false),
+because their output is not text the `%? stdout:` mechanism can express:
+
+```python
+    def writechar_byte_255():
+        # writechar(0 - 1) writes the byte 0xFF (value mod 256)
+        src = scratch("wc255", "_main\n\twritechar(0 - 1);\n"
+                      "\twritechar(10);\n\treturn;\nend\n")
+        exe = os.path.join(BUILD, "bin", "writechar255")
+        p = compiler("--build", src, exe)
+        expect(p.returncode == 0, p.stdout[-1000:])
+        r = subprocess.run([exe], capture_output=True, timeout=10)
+        expect(r.returncode == 0 and r.stdout == b"\xff\n",
+               "got %r, exit %d" % (r.stdout, r.returncode))
+    suite.add("run: writechar(0 - 1) writes byte 255", writechar_byte_255)
+```
+
+Register it with `suite.add` only when `CAN_RUN` is true; otherwise call
+`suite.skip(name, "needs x86-64 Linux with nasm")`, like the other run tests.
 
 ## C.5 Driver and printer tests (`add_driver_tests`)
 
@@ -2960,6 +3260,13 @@ that file as given in C.3):
   Function _main (locals 80 bytes, parameter block 0 bytes)
   ```
 
+* `driver: option 1 keeps % inside literals` — run the menu
+  (`./compiler tests/programs/print_percent.txt <out>` with stdin `"1\n0\n"`)
+  and check that stdout contains `\tprint(b2, "% %d %s %%\n"); \n` (the
+  string intact, the trailing comment removed, the space before it kept) and
+  `\twritechar('%');\n`, and contains neither `trailing comment` nor
+  `A % inside`.
+
 The existing driver tests (`--ast prints every construct`,
 `--symbols prints types, aliases and addresses`) must pass unchanged.
 
@@ -2972,9 +3279,88 @@ Layout:
 * `tests/toy/*.tl` — TL programs with `#?` annotations at the start of lines:
   `#? stdout: <text>` (repeatable), `#? exit: <n>`, `#? error: <line>: <message>`.
   The twelve programs of B.6, `div_by_zero.tl`, the six programs of B.7, and
-  the ten below.
+  the seventeen below (36 files in all).
+
+Additional programs (`tests/toy/`):
+
+**`tests/toy/paren_condition.tl`**
+
+```text
+#? stdout: 10
+#? stdout: 1
+# a condition may start with a parenthesised expression
+x = 0;
+while (x) < 10 { x = x + 1; }
+if (x) == (5 + 5) { print x; }
+if (x - 9) >= 1 { print 1; }
+```
+
+**`tests/toy/zero_init.tl`**
+
+```text
+#? stdout: 0
+# every variable starts at 0; y is defined (textually) but never assigned
+while 0 > 1 { y = 5; }
+print y;
+```
+
+
+**`tests/toy/limits_names.tl`, `tests/toy/limits_nesting.tl`** — the B.5
+limits exactly: 500 distinct names of 16 bytes (8000 bytes), and nesting depth
+200 for each of parentheses, unary minus and blocks. Generated by
+`python3 gen_limits.py tests/toy`:
+
+```python
+# Writes tests/toy/limits_names.tl and tests/toy/limits_nesting.tl
+import sys, os
+d = sys.argv[1] if len(sys.argv) > 1 else "tests/toy"
+names = ["v%015d" % i for i in range(1, 501)]          # 500 names x 16 bytes
+lines = ["#? stdout: 125250", "#? stdout: 499",
+         "# exactly 500 distinct variable names, 8000 bytes of names"]
+lines += ["%s = %d;" % (n, i) for i, n in enumerate(names, 1)]
+lines += ["%s = %s;" % (names[-1], " + ".join(names)),
+          "print %s;" % names[-1], "print %s;" % names[-2]]
+open(os.path.join(d, "limits_names.tl"), "w").write("\n".join(lines) + "\n")
+lines = ["#? stdout: 7", "#? stdout: 7",
+         "# nesting depth 200: parentheses, unary minus, blocks",
+         "x = " + "(" * 200 + "7" + ")" * 200 + ";",
+         "print x;",
+         "y = " + "-" * 200 + "x;"]
+lines += ["if x == 7 {"] * 200 + ["print y;"] + ["}"] * 200
+open(os.path.join(d, "limits_nesting.tl"), "w").write("\n".join(lines) + "\n")
+```
+
 
 Additional error cases (`tests/toy/`):
+
+**`tests/toy/err_no_brace_after_cond.tl`**
+
+```text
+#? error: 3: expected '{'
+x = 0;
+while x < 10 print x;
+```
+
+**`tests/toy/err_undefined_before_lex.tl`**
+
+```text
+#? error: 3: undefined variable x
+y = 1;
+print x
+$
+```
+
+**`tests/toy/err_byte_200.tl`**
+
+This file has , so it is given as the Python code that creates it:
+
+```python
+open("tests/toy/err_byte_200.tl", "wb").write(
+    b'#? error: 3: unexpected byte 200\n'
+    b'x = 1;\n'
+    b'\xc8\n')
+```
+
 
 **`tests/toy/err_no_expr.tl`**
 
@@ -3148,6 +3534,8 @@ def add_toy_tests(suite):
                        "toycc exit status %d, expected 1" % p.returncode)
                 expect(last == [want], "last line %r, expected %r" %
                        (last, want))
+                expect(out.endswith("\n"),
+                       "the error line must end with LF")
                 return
             expect(p.returncode == 0, "toycc failed (exit %d):\n%s" %
                    (p.returncode, out[-1500:]))
@@ -3172,6 +3560,10 @@ def add_toy_tests(suite):
 
 * Update the grammar counts and FIRST/FOLLOW arrays exactly as in A.2.3;
   `test_grammar_is_ll1` and `test_parse_table` must pass unchanged.
+* `test_bitset`: line 149 becomes
+  `CHECK(!bs_contains(&a, 1) && !bs_contains(&a, 62));` and line 158 becomes
+  `CHECK(bs_contains(&c, 64));` (A.2.3); without this the test fails with the
+  enlarged enum.
 * New `test_char_literal_value`: `charLiteralValue("'a'") == 97`,
   `("'\\n'") == 10`, `("'\\t'") == 9`, `("'\\r'") == 13`, `("'\\0'") == 0`,
   `("'\\\\'") == 92`, `("'\\''") == 39`, `("'\"'") == 34`,
@@ -3189,10 +3581,10 @@ def add_toy_tests(suite):
 
 | Area | Where | Count |
 |---|---|---|
-| lexer | `LEXER_CASES` | 34 new cases |
+| lexer | `LEXER_CASES` | 40 new cases |
 | syntax | `tests/syntax/` | 11 new files |
-| semantic | `tests/semantic/` | 5 new files, `call_order.txt` replaced |
-| run | `tests/programs/` | 18 new files |
-| driver | `add_driver_tests` | 2 new tests |
-| unit | `tests/unit/test_units.c` | counts/sets updated, 2–3 new tests |
-| toy | `tests/toy/` + `add_toy_tests` | 29 `.tl` files + 2 checks of `toycc.txt` |
+| semantic | `tests/semantic/` | 8 new files (one generated), `call_order.txt` replaced |
+| run | `tests/programs/` | 22 new files + `writechar_byte_255` |
+| driver | `add_driver_tests` | 3 new tests |
+| unit | `tests/unit/test_units.c` | counts/sets and `test_bitset` updated, 2–3 new tests |
+| toy | `tests/toy/` + `add_toy_tests` | 36 `.tl` files (two generated) + 2 checks of `toycc.txt` |
