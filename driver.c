@@ -96,8 +96,8 @@ static int runFlag(int argc, const char **args) {
   } else if (!strcmp(flag, "--parse")) {
     Compilation c;
     ok = runFrontEnd(src, &c);
-    if (c.tree)
-      printParseTreeFull(c.grammar, c.tree, dst);
+    if (c.tree && !printParseTreeFull(c.grammar, c.tree, dst))
+      ok = 0;
     freeCompilation(&c);
   } else if (!strcmp(flag, "--ast")) {
     ok = printAst(src);
@@ -117,7 +117,7 @@ static int runFlag(int argc, const char **args) {
 }
 
 int main(int argc, const char **args) {
-  char n = '1';
+  int n = 1;
   locateGrammar(args[0]);
   if (argc >= 2 && strncmp(args[1], "--", 2) == 0)
     return runFlag(argc, args);
@@ -126,7 +126,7 @@ int main(int argc, const char **args) {
     usage();
     exit(1);
   }
-  while (n != '0') {
+  while (n != 0) {
     printf("Enter your choice:\n");
     printf("  0 - Exit\n");
     printf("  1 - Remove Comments\n");
@@ -138,24 +138,31 @@ int main(int argc, const char **args) {
     printf("  7 - Semantic Analysis (type checking)\n");
     printf("  8 - Generate Assembly Code (written to the output file)\n");
 
-    if (scanf("\n%c", &n) != 1)
-      break; // end of input
+    // read a whole line so that "10" is one (invalid) choice, not 1 then 0
+    char line[64], *end;
+    do {
+      if (!fgets(line, sizeof(line), stdin))
+        return 0; // end of input
+    } while (line[strspn(line, " \t\r\n")] == '\0'); // skip blank lines
+    n = (int)strtol(line, &end, 10);
+    if (end == line || end[strspn(end, " \t\r\n")] != '\0')
+      n = -1;
     switch (n) {
-    case '0':
+    case 0:
       continue;
-    case '1': {
+    case 1: {
       removeComments(args[1]);
       break;
     }
-    case '2': {
+    case 2: {
       printTokens(args[1]);
       break;
     }
-    case '3': {
+    case 3: {
       parseWithPrinting(args[1],args[2]);
       break;
     }
-    case '4': {
+    case 4: {
       clock_t start_time, end_time;
       double total_CPU_time, total_CPU_time_in_seconds;
       start_time = clock();
@@ -168,16 +175,16 @@ int main(int argc, const char **args) {
       printf("\nTotal CPU time taken: %f seconds\n", total_CPU_time_in_seconds);
       break;
     }
-    case '5':
+    case 5:
       printAst(args[1]);
       break;
-    case '6':
+    case 6:
       printSymbols(args[1]);
       break;
-    case '7':
+    case 7:
       checkSemantics(args[1]);
       break;
-    case '8':
+    case 8:
       generate(args[1], args[2]);
       break;
     default: {

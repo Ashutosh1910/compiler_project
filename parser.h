@@ -16,6 +16,7 @@ void termMapInit(void);
 // token access helpers
 TokenType curToken(TokenList *tokens, int tokenIdx);
 int curLine(TokenList *tokens, int tokenIdx);
+int errorLine(TokenList *tokens, int tokenIdx);
 const char *curLexeme(TokenList *tokens, int tokenIdx);
 
 // bitset helpers
@@ -62,7 +63,7 @@ void freeSyntaxErrors(SyntaxError *errors);
 // stack
 void stackInit(Stack *s);
 int stackEmpty(Stack *s);
-void stackPush(Stack *s, Symbol sym, TreeNode *node);
+int stackPush(Stack *s, Symbol sym, TreeNode *node);
 StackEntry stackPop(Stack *s);
 StackEntry stackPeek(Stack *s);
 
@@ -82,7 +83,8 @@ void printNodeRow(Grammar *g, TreeNode *node, const char *parentSymbol,
 void printTreeInorder(Grammar *g, TreeNode *node, const char *parentSymbol,
                       FILE *out);
 void printParseTree(TreeNode *root, int depth, FILE *out);
-void printParseTreeFull(Grammar *g, TreeNode *root, const char *outfile);
+// returns 1 if the file was written
+int printParseTreeFull(Grammar *g, TreeNode *root, const char *outfile);
 void freeParseTree(TreeNode *node);
 // for driver
 void parseWithoutPrinting(const char *filename);

@@ -15,6 +15,12 @@
 
 #define AST_NAME_LEN 32
 
+// Deeper expressions are rejected by semantic analysis: every later pass
+// recurses over expressions, and the generated code keeps one stack slot per
+// level. The AST builder stops nesting one level past the limit, so no pass
+// ever sees a deeper tree.
+#define MAX_EXPR_DEPTH 1000
+
 struct Type;    // defined in symbolTable.h
 struct VarEntry;
 struct FuncEntry;

@@ -10,10 +10,6 @@
 #include "symbolTable.h"
 #include <stdio.h>
 
-// Deeper expressions are rejected: the checker and code generator recurse
-// over expressions, and the generated code keeps one stack slot per level.
-#define MAX_EXPR_DEPTH 1000
-
 // Builds the symbol table, lays out memory and type checks the program.
 // Errors are printed to `out` sorted by line, one per line:
 //   [SEMANTIC-ERROR] at line N: message

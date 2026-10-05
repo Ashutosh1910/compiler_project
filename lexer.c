@@ -9,6 +9,9 @@
 #include <string.h>
 #define MAX_VARIABLE_LEN 20
 #define MAX_FUNCTION_LEN 30
+// digits before the decimal point; with ".dd" and "E+dd" a number still
+// fits the 30 characters of Token.lexeme
+#define MAX_NUMBER_DIGITS 23
 #define HASH_SIZE 53
 
 Token newToken(TokenType type, State *s) {
@@ -282,7 +285,7 @@ TokenList scan(State *s) {
       }
       break;
 
-    case '#':
+    case '#': {
       Token rtoken = newToken(TK_RUID, s);
       do {
         rtoken.lexeme[rtoken.lexemeSize++] = c;
@@ -307,8 +310,9 @@ TokenList scan(State *s) {
       appendToTokenList(rtoken,s);
       s->scanNext = 0;
       break;
+    }
 
-    case '_':
+    case '_': {
       Token fun = newToken(TK_FUNID, s);
       do {
         fun.lexeme[fun.lexemeSize++] = c;
@@ -370,6 +374,7 @@ TokenList scan(State *s) {
       fun.lexeme[fun.lexemeSize] = '\0';
       appendToTokenList(fun,s);
       break;
+    }
     case '%':
       appendToTokenList(newToken(TK_COMMENT, s),s);
       while (c != '\n' && c != EOF) {
@@ -394,7 +399,28 @@ TokenList scan(State *s) {
           num_digits++;
           num.lexeme[num.lexemeSize++] = c;
           c = fgetc(s->file);
-        } while (isNum(c) && num_digits < MAX_VARIABLE_LEN);
+        } while (isNum(c) && num_digits < MAX_NUMBER_DIGITS);
+
+        if (isNum(c)) {
+          // too long for the lexeme buffer: report it and skip the whole
+          // number (digits, fraction and exponent) instead of splitting it
+          printLexerError("number has more than 23 digits", s);
+          while (isNum(c))
+            c = fgetc(s->file);
+          if (c == '.')
+            do
+              c = fgetc(s->file);
+            while (isNum(c));
+          if (c == 'E') {
+            c = fgetc(s->file);
+            if (c == '+' || c == '-')
+              c = fgetc(s->file);
+            while (isNum(c))
+              c = fgetc(s->file);
+          }
+          s->scanNext = 0;
+          break;
+        }
 
         if (c != '.') {
           appendToTokenList(num,s);
@@ -541,7 +567,11 @@ TokenList scan(State *s) {
         appendToTokenList(var,s);
       } else {
         char msg[32];
-        snprintf(msg, sizeof(msg), "%c not recognized", c);
+        if (c > 32 && c < 127)
+          snprintf(msg, sizeof(msg), "%c not recognized", c);
+        else // NUL, control characters and non-ASCII bytes
+          snprintf(msg, sizeof(msg), "byte \\x%02X not recognized",
+                   (unsigned char)c);
         printLexerError(msg, s);
       }
     }

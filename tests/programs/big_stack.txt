@@ -1,0 +1,92 @@
+% A call chain that uses about 5 MiB of stack (two 1 MiB locals in _main,
+% a 2 MiB parameter block and a 1 MiB local in _sum) runs on the usual
+% 8 MiB stack; the semantic limit is 6 MiB.
+%? stdout: 12
+%? stdout: 7
+_sum input parameter list [#rq b2, #rq b3]
+output parameter list [int b4];
+	type #rq : d2;
+	d2.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.x <--- 5;
+	b4 <--- b2.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.x + b3.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.x + d2.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.x;
+	return [b4];
+end
+_main
+	record #ra
+		type int : x;
+		type int : y;
+	endrecord
+	record #rb
+		type #ra : p;
+		type #ra : q;
+	endrecord
+	record #rc
+		type #rb : p;
+		type #rb : q;
+	endrecord
+	record #rd
+		type #rc : p;
+		type #rc : q;
+	endrecord
+	record #re
+		type #rd : p;
+		type #rd : q;
+	endrecord
+	record #rf
+		type #re : p;
+		type #re : q;
+	endrecord
+	record #rg
+		type #rf : p;
+		type #rf : q;
+	endrecord
+	record #rh
+		type #rg : p;
+		type #rg : q;
+	endrecord
+	record #ri
+		type #rh : p;
+		type #rh : q;
+	endrecord
+	record #rj
+		type #ri : p;
+		type #ri : q;
+	endrecord
+	record #rk
+		type #rj : p;
+		type #rj : q;
+	endrecord
+	record #rl
+		type #rk : p;
+		type #rk : q;
+	endrecord
+	record #rm
+		type #rl : p;
+		type #rl : q;
+	endrecord
+	record #rn
+		type #rm : p;
+		type #rm : q;
+	endrecord
+	record #ro
+		type #rn : p;
+		type #rn : q;
+	endrecord
+	record #rp
+		type #ro : p;
+		type #ro : q;
+	endrecord
+	record #rq
+		type #rp : p;
+		type #rp : q;
+	endrecord
+	type #rq : d2;
+	type #rq : d3;
+	type int : b2;
+	d2.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.x <--- 3;
+	d3.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.x <--- 4;
+	[b2] <--- call _sum with parameters [d2, d3];
+	write(b2);
+	b2 <--- d2.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.x + d3.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.p.x;
+	write(b2);
+	return;
+end

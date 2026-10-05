@@ -33,6 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS = os.path.join(ROOT, "tests")
@@ -109,6 +110,9 @@ def run(args, stdin=None, timeout=20, cwd=ROOT):
     if "Sanitizer" in p.stderr or "runtime error:" in p.stderr:
         raise Failure("sanitizer report from %s:\n%s" %
                       (" ".join(args), p.stderr[-2000:]))
+    if p.returncode < 0:
+        raise Failure("%s was killed by signal %d (crash)" %
+                      (" ".join(args)[-300:], -p.returncode))
     return p
 
 
@@ -117,13 +121,17 @@ def compiler(*args, stdin=None, timeout=20, cwd=ROOT):
 
 
 _counter = [0]
+_counter_lock = threading.Lock()
 
 
 def scratch(name, text):
-    """Writes text to a fresh file under tests/build and returns its path."""
-    _counter[0] += 1
-    path = os.path.join(BUILD, "src", "%d_%s.txt" % (_counter[0], name))
-    with open(path, "w") as f:
+    """Writes text to a fresh file under tests/build and returns its path.
+    Tests run in parallel threads, so the counter is taken under a lock."""
+    with _counter_lock:
+        _counter[0] += 1
+        n = _counter[0]
+    path = os.path.join(BUILD, "src", "%d_%s.txt" % (n, name))
+    with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     return path
 
@@ -149,8 +157,15 @@ def tokens_of(text):
     return toks, errs
 
 
-def annotations(path):
-    """Parses the %? directives of a test program."""
+def unique_name(path):
+    """A file name derived from the path relative to the repository, so two
+    tests named unions.txt in different folders never share output files."""
+    return os.path.relpath(path, ROOT).replace(os.sep, "__")
+
+
+def annotations(path, allowed):
+    """Parses the %? directives of a test program; directives that the
+    test's folder does not check are rejected rather than ignored."""
     ann = {"error": [], "syntax-error": [], "lex-error": [], "stdin": [],
            "stdout": [], "exit": 0, "ok": False}
     with open(path) as f:
@@ -158,6 +173,10 @@ def annotations(path):
             for part in line.split("%?")[1:]:
                 key, _, value = part.strip().partition(":")
                 key, value = key.strip(), value.strip()
+                if key not in allowed:
+                    raise Failure("%s:%d: directive %r is not checked for "
+                                  "this kind of test (allowed: %s)" %
+                                  (path, lineno, key, ", ".join(allowed)))
                 if key in ("error", "lex-error"):
                     ann[key].append((lineno, value))
                 elif key == "syntax-error":
@@ -220,14 +239,18 @@ def build(asan):
 # ============================================================ unit tests
 
 def add_unit_tests(suite, asan):
-    def no_warnings():
-        srcs = [os.path.join(ROOT, s) for s in ["driver.c"] + SOURCES]
-        p = subprocess.run([CC, "-Wall", "-Wextra", "-O2", "-fsyntax-only"] +
-                           srcs, capture_output=True, text=True)
-        expect(p.returncode == 0 and "warning" not in p.stderr,
-               "the compiler sources have warnings:\n" + p.stderr[-3000:])
-    suite.add("build: sources compile without warnings (-Wall -Wextra)",
-              no_warnings)
+    # gcc is the course compiler; clang is what macOS calls "gcc"
+    for cc in [CC] + (["clang"] if shutil.which("clang") else []):
+        def no_warnings(cc=cc):
+            srcs = [os.path.join(ROOT, s) for s in ["driver.c"] + SOURCES]
+            p = subprocess.run([cc, "-Wall", "-Wextra", "-O2",
+                                "-fsyntax-only"] + srcs,
+                               capture_output=True, text=True)
+            expect(p.returncode == 0 and "warning" not in p.stderr,
+                   "the compiler sources have warnings:\n" +
+                   p.stderr[-3000:])
+        suite.add("build: no warnings with %s -Wall -Wextra" % cc,
+                  no_warnings)
 
     def unit():
         exe = os.path.join(BUILD, "unit")
@@ -365,6 +388,29 @@ LEXER_CASES = [
     ("errors do not stop the lexer", "b2 $ c3\n? d4",
      ["TK_ID b2 @1", "TK_ID c3 @1", "TK_ID d4 @2"],
      [(1, "$ not recognized"), (2, "? not recognized")]),
+    ("21-digit integer is one token", "111111111111111111111 x",
+     ["TK_NUM 111111111111111111111", "TK_FIELDID x"], []),
+    ("23-digit real is one token", "12345678901234567890123.50E+05",
+     ["TK_RNUM 12345678901234567890123.50E+05"], []),
+    ("24-digit number is an error, skipped whole", "b2 " + "1" * 24 + ".50 c3",
+     ["TK_ID b2", "TK_ID c3"], [(1, "number has more than 23 digits")]),
+    ("function id too long in its digits", "_" + "a" * 20 + "1" * 10 + " ;",
+     ["TK_SEM"], [(1, "exceeded max size of function name (30)")]),
+    ("record id of 20 characters", "#" + "a" * 19, ["TK_RUID #" + "a" * 19],
+     []),
+    ("record id of 21 characters", "#" + "a" * 20 + " ;", ["TK_SEM"],
+     [(1, "exceeded max size of identifier (20)")]),
+    ("NUL and control bytes", "b2\x00c3\x01d4",
+     ["TK_ID b2", "TK_ID c3", "TK_ID d4"],
+     [(1, "byte \\x00 not recognized"), (1, "byte \\x01 not recognized")]),
+    ("non-ASCII bytes", "b2 \u00e9 c3", ["TK_ID b2", "TK_ID c3"],
+     [(1, "byte \\xC3 not recognized"), (1, "byte \\xA9 not recognized")]),
+    ("assignment then minus", "b2<----5",
+     ["TK_ID b2", "TK_ASSIGNOP", "TK_MINUS", "TK_NUM 5"], []),
+    ("lower-case e is not an exponent", "12.34e+05",
+     ["TK_RNUM 12.34", "TK_FIELDID e", "TK_PLUS", "TK_NUM 05"], []),
+    ("exponent takes exactly two digits", "12.34E+056",
+     ["TK_RNUM 12.34E+05", "TK_NUM 6"], []),
     ("statement", "c2<---12.50*b3;",
      ["TK_ID c2", "TK_ASSIGNOP", "TK_RNUM 12.50", "TK_MUL", "TK_ID b3",
       "TK_SEM"], []),
@@ -428,7 +474,7 @@ def leaves_of_parse_tree(path):
 def check_parse_tree(src):
     """The in-order printed tree must list the source tokens left to right:
     leaves of an in-order walk keep their left-to-right order."""
-    out = os.path.join(BUILD, "src", os.path.basename(src) + ".tree")
+    out = os.path.join(BUILD, "src", unique_name(src) + ".tree")
     p = compiler("--parse", src, out)
     expect(p.returncode == 0, "parse failed:\n" + p.stdout[-2000:])
     toks, _ = tokens_of(open(src).read())
@@ -457,7 +503,9 @@ def add_parser_tests(suite):
         path = os.path.join(folder, f)
 
         def test(path=path):
-            ann = annotations(path)
+            ann = annotations(path, ("syntax-error", "lex-error"))
+            expect(ann["syntax-error"] or ann["lex-error"],
+                   "a syntax test needs '%? syntax-error' or '%? lex-error'")
             p = compiler("--check", path)
             expect(p.returncode == 1, "expected exit status 1, got %d" %
                    p.returncode)
@@ -470,8 +518,11 @@ def add_parser_tests(suite):
             expect(not matches(SEM_ERR, p.stdout),
                    "semantic analysis must not run after syntax errors")
             # printing the tree of an erroneous program must not crash
-            out = os.path.join(BUILD, "src", f + ".tree")
-            compiler("--parse", path, out)
+            # (run() fails the test on a signal)
+            out = os.path.join(BUILD, "src", unique_name(path) + ".tree")
+            p = compiler("--parse", path, out)
+            expect(p.returncode == 1, "--parse exit status %d" %
+                   p.returncode)
         suite.add("syntax: " + f, test)
 
     def parse_tree_format():
@@ -500,7 +551,7 @@ def add_semantic_tests(suite):
         path = os.path.join(folder, f)
 
         def test(path=path):
-            ann = annotations(path)
+            ann = annotations(path, ("error", "ok"))
             p = compiler("--check", path)
             errs = [(int(l), m) for l, m in matches(SEM_ERR, p.stdout)]
             expect(not matches(SYN_ERR, p.stdout) and
@@ -524,7 +575,7 @@ def add_semantic_tests(suite):
 # ===================================================== end-to-end tests
 
 def compile_and_run(path, stdin_lines, expect_exit=0, expected_stdout=None):
-    base = os.path.join(BUILD, "bin", os.path.basename(path)[:-4])
+    base = os.path.join(BUILD, "bin", unique_name(path)[:-4])
     p = compiler("--build", path, base)
     expect(p.returncode == 0, "compilation failed:\n" + p.stdout[-2000:] +
            p.stderr[-1000:])
@@ -572,7 +623,7 @@ def add_program_tests(suite):
             continue
 
         def test(path=path):
-            ann = annotations(path)
+            ann = annotations(path, ("stdin", "stdout", "exit"))
             expect(ann["stdout"] or ann["exit"],
                    "a program test needs '%? stdout:' lines")
             compile_and_run(path, ann["stdin"], ann["exit"], ann["stdout"])
@@ -590,7 +641,8 @@ def add_program_tests(suite):
         # the assembly must at least be accepted by nasm even where it
         # cannot run
         for f in sorted(os.listdir(folder)):
-            out = os.path.join(BUILD, "src", f + ".asm")
+            out = os.path.join(BUILD, "src", unique_name(
+                os.path.join(folder, f)) + ".asm")
             p = compiler("--asm", os.path.join(folder, f), out)
             expect(p.returncode == 0, "%s: %s" % (f, p.stdout[-1000:]))
             text = open(out).read()
@@ -610,21 +662,35 @@ def add_program_tests(suite):
 
 def add_sample_file_tests(suite):
     def testcase1():
-        p = compiler("--check", os.path.join(ROOT, "testcase1.txt"))
-        lex = [int(l) for l, _ in matches(LEX_ERR, p.stdout)]
+        p = compiler("--tokens", os.path.join(ROOT, "testcase1.txt"))
         expect(p.returncode == 1, "testcase1 has lexical errors")
-        # line 5: '@&', '=+'  line 6: '<-' and '<*'  line 8: 12.3, 12., E+
-        # line 9: '_9'
-        for line in (5, 6, 8, 9):
-            expect(line in lex, "no lexical error reported on line %d: %s" %
-                   (line, lex))
-    suite.add("samples: testcase1 lexical errors (no crash)", testcase1)
+        match_errors("lexical errors", [
+            (5, "expected @@@"), (5, "expected &&&"),  # @&  and  & alone
+            (5, "expected =="),                         # =+
+            (6, "expected <--"), (6, "expected <--"),   # <-  and  <--
+            (7, "expected record identifier"),          # #////
+            (7, "exceeded max size of identifier"),     # # + 26 letters
+            (8, "expected number after decimal"),       # 12.3
+            (8, "expected number after decimal"),       # 12.
+            (8, "expected number after E"),             # 23.56E+
+            (9, "expected function name"),              # _9
+        ], [(int(l), m) for l, m in matches(LEX_ERR, p.stdout)])
+    suite.add("samples: testcase1 lexical errors", testcase1)
 
     def testcase2():
-        p = compiler("--check", os.path.join(ROOT, "testcase2.txt"))
-        expect(p.returncode == 1 and matches(LEX_ERR, p.stdout),
-               "testcase2 has lexical errors")
-    suite.add("samples: testcase2 lexical errors (no crash)", testcase2)
+        p = compiler("--tokens", os.path.join(ROOT, "testcase2.txt"))
+        expect(p.returncode == 1, "testcase2 has lexical errors")
+        match_errors("lexical errors", [
+            (6, "expected =="),                         # <==
+            (6, "expected &&&"),                        # &&|
+            (6, "| not recognized"), (6, "| not recognized"),
+            (6, "| not recognized"),
+            (7, "expected number after decimal"),       # 123.5.
+            (8, "exceeded max length of identifier"),   # d4cbccc...77
+            (9, "expected number after decimal"),       # 5000.7
+            (10, "$ not recognized"),                   # $real
+        ], [(int(l), m) for l, m in matches(LEX_ERR, p.stdout)])
+    suite.add("samples: testcase2 lexical errors", testcase2)
 
     def testcase6():
         p = compiler("--check", os.path.join(ROOT, "testcase6.txt"))
@@ -766,11 +832,114 @@ def add_driver_tests(suite):
                "assembly must not be written for an invalid program")
     suite.add("driver: no assembly for invalid programs", no_asm_on_error)
 
+    def ast_flag():
+        p = compiler("--ast", os.path.join(TESTS, "semantic",
+                                           "valid_everything.txt"))
+        for needle in ("Function _scale (line 3)", "Input b2 : record #vec",
+                       "Union #payload", "Definetype record #vec as #v",
+                       "Declare b7 : int (global)",
+                       "Assign (line 5): b3 <--- (b2 * c2)",
+                       "Call (line 43): [d3] <--- _scale with [d2, c2]",
+                       "If (line 47): (b3 > 0) &&& (~(c2 == 0.00))",
+                       "While (line 52): (b2 < 100) @@@ (b2 == 0)",
+                       "Assign (line 53): b2 <--- ((b2 * 2) + 1)",
+                       "Return (line 6): [b3]"):
+            expect(needle in p.stdout, "%r missing from --ast output:\n%s" %
+                   (needle, p.stdout[-2500:]))
+    suite.add("driver: --ast prints every construct", ast_flag)
+
+    def symbols_flag():
+        p = compiler("--symbols", os.path.join(ROOT, "testcase8.txt"))
+        rows = [" ".join(l.split()) for l in p.stdout.splitlines()]
+        for needle in ("#vec record 16 x:real@0 y:real@8",
+                       "#seg record 32 start:#vec@0 finish:#vec@16",
+                       "#either union 32 line:#seg@0 point:#vec@0",
+                       "#wrapper record 40 tag:int@0 data:#either@8",
+                       "#point alias of #vec", "#shape alias of #either",
+                       "d3 local #wrapper 40 rbp-40 27",
+                       "b4 local real 8 rbp-48 28"):
+            expect(needle in rows, "%r missing from --symbols output:\n%s" %
+                   (needle, p.stdout[-2500:]))
+        p = compiler("--symbols", os.path.join(ROOT, "testcase4.txt"))
+        rows = [" ".join(l.split()) for l in p.stdout.splitlines()]
+        for needle in ("b3b444 global int 8 G_b3b444 28",
+                       "c3 input int 8 rbp+16 6", "c6 output real 8 rbp+40 7"):
+            expect(needle in rows, "%r missing from --symbols output" % needle)
+    suite.add("driver: --symbols prints types, aliases and addresses",
+              symbols_flag)
+
+    def unwritable_output():
+        p = compiler("--parse", src, os.path.join(BUILD, "no", "such", "x"))
+        expect(p.returncode == 1 and "Cannot open" in p.stdout, p.stdout)
+        p = compiler("--asm", src, os.path.join(BUILD, "no", "such", "x"))
+        expect(p.returncode == 1, "--asm exit %d" % p.returncode)
+    suite.add("driver: unwritable output file is an error", unwritable_output)
+
+    def menu_on_bad_program():
+        bad = os.path.join(TESTS, "syntax", "missing_then.txt")
+        out = os.path.join(BUILD, "src", "bad.tree")
+        p = compiler(bad, out, stdin="3\n4\n0\n")
+        expect(p.stdout.count("SYNTAX-ERROR") == 2 and
+               "Total CPU time taken" in p.stdout, p.stdout[-800:])
+    suite.add("driver: options 3 and 4 on a program with errors",
+              menu_on_bad_program)
+
+    def menu_reads_lines():
+        p = compiler(src, os.path.join(BUILD, "src", "m.out"),
+                     stdin="10\n\n 7 \nabc\n0\n")
+        expect(p.stdout.count("wrong choice") == 2 and
+               "compiles successfully" in p.stdout, p.stdout[-800:])
+    suite.add("driver: menu choices are whole lines", menu_reads_lines)
+
     def other_directory():
         # grammar.txt is found next to the executable
         p = compiler("--check", src, cwd=os.path.join(BUILD, "src"))
         expect(p.returncode == 0, p.stdout[-500:])
     suite.add("driver: works from another directory", other_directory)
+
+
+# ===================================================== robustness tests
+
+def add_stress_tests(suite):
+    def deep_parentheses():
+        text = ("_main\n\ttype int : b2;\n\tb2 <--- " + "(" * 3000 + "b2" +
+                ")" * 3000 + ";\n\treturn;\nend\n")
+        p = compiler("--check", scratch("deep", text))
+        expect(p.returncode == 1 and "nested too deeply" in p.stdout,
+               p.stdout[-500:])
+    suite.add("stress: deeply nested parentheses give a syntax error",
+              deep_parentheses)
+
+    def long_expression():
+        text = ("_main\n\ttype int : b2;\n\tb2 <--- " +
+                " + ".join(["1"] * 300000) + ";\n\treturn;\nend\n")
+        src = scratch("longexpr", text)
+        for flag in ("--check", "--ast", "--symbols"):
+            p = compiler(flag, src, timeout=60)
+            expect(p.returncode in (0, 1), "%s exit %d" % (flag, p.returncode))
+        p = compiler("--check", src, timeout=60)
+        expect("too deeply nested" in p.stdout, p.stdout[-300:])
+    suite.add("stress: 300000-term expression is rejected cleanly",
+              long_expression)
+
+    def many_statements():
+        text = ("_main\n\ttype int : b2;\n" + "\tb2 <--- b2 + 1;\n" * 100000
+                + "\twrite(b2);\n\treturn;\nend\n")
+        src = scratch("many", text)
+        p = compiler("--check", src, timeout=60)
+        expect(p.returncode == 0, p.stdout[-300:])
+        p = compiler("--parse", src, os.path.join(BUILD, "src", "many.tree"),
+                     timeout=60)
+        expect(p.returncode == 0, p.stdout[-300:])
+    suite.add("stress: 100000 statements compile and print", many_statements)
+
+    def eof_error_line():
+        p = compiler("--check", scratch("eof", "_main\n\treturn;\n\n\n"))
+        syn = [int(l) for l, _ in matches(SYN_ERR, p.stdout)]
+        expect(syn == [2], "missing 'end' must be reported on line 2 (the "
+               "last token), got %s" % syn)
+    suite.add("stress: end-of-file errors use the last token's line",
+              eof_error_line)
 
 
 # ==================================================================== main
@@ -795,6 +964,7 @@ def main():
     add_sample_file_tests(suite)
     add_program_tests(suite)
     add_driver_tests(suite)
+    add_stress_tests(suite)
     suite.run(args.j)
 
     for name, reason in suite.skipped:

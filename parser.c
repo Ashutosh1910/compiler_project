@@ -73,6 +73,14 @@ const char *curLexeme(TokenList *tokens, int tokenIdx) {
                                  : "$";
 }
 
+// Line to report an error at. At end of input that is the line of the last
+// real token, not the (possibly nonexistent) line where the file ends.
+int errorLine(TokenList *tokens, int tokenIdx) {
+  if (curToken(tokens, tokenIdx) == TK_DOLLAR && tokenIdx > 0)
+    return curLine(tokens, tokenIdx - 1);
+  return curLine(tokens, tokenIdx);
+}
+
 void bs_clear(BitSet *s) {
   for (int i = 0; i < BITSET_WORDS; i++)
     s->bits[i] = 0;
@@ -481,14 +489,13 @@ void freeSyntaxErrors(SyntaxError *errors) {
 void stackInit(Stack *s) { s->top = -1; }
 int stackEmpty(Stack *s) { return s->top < 0; }
 
-void stackPush(Stack *s, Symbol sym, TreeNode *node) {
-  if (s->top >= STACK_CAP - 1) {
-    fprintf(stderr, "[PARSER] Stack overflow!\n");
-    return;
-  }
+int stackPush(Stack *s, Symbol sym, TreeNode *node) {
+  if (s->top >= STACK_CAP - 1)
+    return 0; // full: the caller reports the error and stops parsing
   s->top++;
   s->data[s->top].sym = sym;
   s->data[s->top].node = node;
+  return 1;
 }
 
 StackEntry stackPop(Stack *s) { return s->data[s->top--]; }
@@ -565,13 +572,13 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
           stackPop(&stack);
           break;
         } else {
-          if (curLine(tokens, tokenIdx) != lastErrLine) {
+          if (errorLine(tokens, tokenIdx) != lastErrLine) {
             char msgBuf[256];
             snprintf(msgBuf, sizeof(msgBuf),
                      "Unexpected token '%s' (%s) after end of program",
                      curLexeme(tokens, tokenIdx), tokenTypeToString(curTok));
-            addSyntaxError(errors, curLine(tokens, tokenIdx), msgBuf);
-            lastErrLine = curLine(tokens, tokenIdx);
+            addSyntaxError(errors, errorLine(tokens, tokenIdx), msgBuf);
+            lastErrLine = errorLine(tokens, tokenIdx);
           }
           break;
         }
@@ -587,7 +594,7 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
         tokenIdx++;
         skipComments(tokens, &tokenIdx);
       } else {
-        if (curLine(tokens, tokenIdx) != lastErrLine) {
+        if (errorLine(tokens, tokenIdx) != lastErrLine) {
           char msgBuf[256];
           snprintf(
               msgBuf, sizeof(msgBuf),
@@ -595,8 +602,8 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
               "token %s",
               tokenTypeToString(curTok), curLexeme(tokens, tokenIdx),
               tokenTypeToString((TokenType)top.sym.id));
-          addSyntaxError(errors, curLine(tokens, tokenIdx), msgBuf);
-          lastErrLine = curLine(tokens, tokenIdx);
+          addSyntaxError(errors, errorLine(tokens, tokenIdx), msgBuf);
+          lastErrLine = errorLine(tokens, tokenIdx);
         }
         stackPop(&stack);
       }
@@ -605,14 +612,14 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
       int ruleIdx = pt->table[nt][(int)curTok];
 
       if (ruleIdx == -1) {
-        if (curLine(tokens, tokenIdx) != lastErrLine) {
+        if (errorLine(tokens, tokenIdx) != lastErrLine) {
           char msgBuf[256];
           snprintf(msgBuf, sizeof(msgBuf),
                    "Invalid token %s encountered with value %s stack top %s",
                    tokenTypeToString(curTok), curLexeme(tokens, tokenIdx),
                    g->ntNames[nt]);
-          addSyntaxError(errors, curLine(tokens, tokenIdx), msgBuf);
-          lastErrLine = curLine(tokens, tokenIdx);
+          addSyntaxError(errors, errorLine(tokens, tokenIdx), msgBuf);
+          lastErrLine = errorLine(tokens, tokenIdx);
         }
 
         while (curTok != TK_DOLLAR && pt->table[nt][(int)curTok] == -1 &&
@@ -657,17 +664,22 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
           addChild(parentNode, childNodes[i]);
         }
 
-        for (int i = rule->rhsLen - 1; i >= 0; i--) {
-          stackPush(&stack, rule->rhs[i], childNodes[i]);
-        }
+        for (int i = rule->rhsLen - 1; i >= 0; i--)
+          if (!stackPush(&stack, rule->rhs[i], childNodes[i]))
+            goto overflow;
       } else {
-        for (int i = rule->rhsLen - 1; i >= 0; i--) {
-          stackPush(&stack, rule->rhs[i], NULL);
-        }
+        for (int i = rule->rhsLen - 1; i >= 0; i--)
+          if (!stackPush(&stack, rule->rhs[i], NULL))
+            goto overflow;
       }
     }
   }
+  return root;
 
+overflow:
+  addSyntaxError(errors, errorLine(tokens, tokenIdx),
+                 "program is nested too deeply for the parser stack; "
+                 "parsing stopped");
   return root;
 }
 
@@ -709,33 +721,56 @@ void printNodeRow(Grammar *g, TreeNode *node, const char *parentSymbol,
           nodeSymbol);
 }
 
+static const char *symbolName(Grammar *g, TreeNode *node) {
+  if (node->sym.kind == SYM_NON_TERMINAL)
+    return g->ntNames[node->sym.id];
+  return tokenTypeToString((TokenType)node->sym.id);
+}
+
+// In-order walk with an explicit stack: a long statement list makes the
+// tree hundreds of thousands of levels deep, which recursion cannot handle.
+// For a node with children: first subtree, then the node, then the others.
+typedef struct {
+  TreeNode *node;
+  const char *parent;
+  int firstDone; // first subtree already printed
+} PrintFrame;
+
 void printTreeInorder(Grammar *g, TreeNode *node, const char *parentSymbol,
                       FILE *out) {
   if (!node)
     return;
-
-  if (node->firstChild) {
-    const char *mySymbol;
-    if (node->sym.kind == SYM_NON_TERMINAL)
-      mySymbol = g->ntNames[node->sym.id];
-    else
-      mySymbol = tokenTypeToString((TokenType)node->sym.id);
-
-    printTreeInorder(g, node->firstChild, mySymbol, out);
+  int cap = 64, top = 0;
+  PrintFrame *stack = malloc(sizeof(PrintFrame) * cap);
+  stack[top++] = (PrintFrame){node, parentSymbol, 0};
+  while (top > 0) {
+    PrintFrame f = stack[top - 1];
+    if (!f.node->firstChild) {
+      printNodeRow(g, f.node, f.parent, out);
+      top--;
+      continue;
+    }
+    const char *mine = symbolName(g, f.node);
+    if (!f.firstDone) {
+      stack[top - 1].firstDone = 1;
+      if (top == cap)
+        stack = realloc(stack, sizeof(PrintFrame) * (cap *= 2));
+      stack[top++] = (PrintFrame){f.node->firstChild, mine, 0};
+      continue;
+    }
+    top--;
+    printNodeRow(g, f.node, f.parent, out);
+    int rest = 0;
+    for (TreeNode *c = f.node->firstChild->nextSibling; c; c = c->nextSibling)
+      rest++;
+    while (top + rest > cap)
+      stack = realloc(stack, sizeof(PrintFrame) * (cap *= 2));
+    int i = top + rest - 1; // push in reverse so the leftmost pops first
+    for (TreeNode *c = f.node->firstChild->nextSibling; c; c = c->nextSibling)
+      stack[i--] = (PrintFrame){c, mine, 0};
+    top += rest;
   }
-
-  printNodeRow(g, node, parentSymbol, out);
-
-  if (node->firstChild) {
-    const char *mySymbol;
-    if (node->sym.kind == SYM_NON_TERMINAL)
-      mySymbol = g->ntNames[node->sym.id];
-    else
-      mySymbol = tokenTypeToString((TokenType)node->sym.id);
-
-    for (TreeNode *c = node->firstChild->nextSibling; c; c = c->nextSibling)
-      printTreeInorder(g, c, mySymbol, out);
-  }
+  free(stack);
 }
 
 void printParseTree(TreeNode *root, int depth, FILE *out) {
@@ -749,16 +784,16 @@ void printParseTree(TreeNode *root, int depth, FILE *out) {
           "-----------------------------------------------------\n");
 }
 
-void printParseTreeFull(Grammar *g, TreeNode *root, const char *outfile) {
+int printParseTreeFull(Grammar *g, TreeNode *root, const char *outfile) {
   FILE *out = fopen(outfile, "w");
   if (!out) {
-    perror("Cannot open output file for parse tree");
-    return;
+    printf("Cannot open output file %s for the parse tree\n", outfile);
+    return 0;
   }
   if (!root) {
     fprintf(out, "(empty tree)\n");
     fclose(out);
-    return;
+    return 1;
   }
 
   fprintf(out, "%-25s %-6s %-18s %-15s %-25s %-5s %s\n", "lexeme", "line",
@@ -769,15 +804,26 @@ void printParseTreeFull(Grammar *g, TreeNode *root, const char *outfile) {
 
   printTreeInorder(g, root, "ROOT", out);
 
-  fclose(out);
+  return fclose(out) == 0;
 }
 
+// Frees node and its siblings without recursion: each node's children are
+// spliced into the sibling chain in front of its next sibling before the
+// node itself is freed.
 void freeParseTree(TreeNode *node) {
-  if (!node)
-    return;
-  freeParseTree(node->firstChild);
-  freeParseTree(node->nextSibling);
-  free(node);
+  while (node) {
+    if (node->firstChild) {
+      TreeNode *last = node->firstChild;
+      while (last->nextSibling)
+        last = last->nextSibling;
+      last->nextSibling = node->nextSibling;
+      node->nextSibling = node->firstChild;
+      node->firstChild = NULL;
+    }
+    TreeNode *next = node->nextSibling;
+    free(node);
+    node = next;
+  }
 }
 
 void parseWithPrinting(const char *filename, const char *outputfile) {
@@ -812,8 +858,8 @@ void parseWithPrinting(const char *filename, const char *outputfile) {
   }
 
   if (tree) {
-    printParseTreeFull(grammar, tree, outputfile);
-    printf("Parse tree written to %s\n", outputfile);
+    if (printParseTreeFull(grammar, tree, outputfile))
+      printf("Parse tree written to %s\n", outputfile);
     freeParseTree(tree);
   }
 

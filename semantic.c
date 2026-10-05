@@ -84,8 +84,14 @@ static void setAdd(AccessSet *s, VarEntry *v, int offset, int size) {
 }
 
 static void setAddRef(AccessSet *s, AstVarRef *r) {
-  if (r->entry)
-    setAdd(s, r->entry, r->offset, r->type ? r->type->size : 0);
+  if (!r->entry)
+    return;
+  if (r->type)
+    setAdd(s, r->entry, r->offset, r->type->size);
+  else // a field that failed to resolve (already reported): assume the
+       // whole variable may change, so no follow-on error is reported
+    setAdd(s, r->entry, 0, r->entry->type->size > 0 ? r->entry->type->size
+                                                     : SCALAR_SIZE);
 }
 
 static void setAddWhole(AccessSet *s, VarEntry *v) {
@@ -632,10 +638,12 @@ static void checkCall(Stmt *s) {
     checkId(&s->ins.ids[i]);
   for (int i = 0; i < s->outs.count; i++) {
     VarEntry *v = checkId(&s->outs.ids[i]);
+    int earlier = 0;
     for (int j = 0; v && j < i; j++)
-      if (s->outs.ids[j].entry == v)
-        semError(s->line, "%s receives more than one result of %s",
-                 v->name, s->funName);
+      earlier += s->outs.ids[j].entry == v;
+    if (earlier == 1) // report each variable once, at its second use
+      semError(s->line, "%s receives more than one result of %s", v->name,
+               s->funName);
   }
   if (!callee)
     return;
@@ -846,6 +854,73 @@ static void checkReturn(FuncEntry *fe) {
   free(assigned.items);
 }
 
+/* ------------------------------------------------------------ stack use */
+
+// Bytes a statement list may push temporarily: record assignments stage
+// every field on the stack, and expressions keep one slot per level.
+static long long tempStack(Stmt *s) {
+  long long most = 8LL * (MAX_EXPR_DEPTH + 2);
+  for (; s; s = s->next) {
+    if (s->kind == STMT_ASSIGN && s->lhs.type && isAggregate(s->lhs.type) &&
+        s->lhs.type->size > most)
+      most = s->lhs.type->size;
+    long long inner = tempStack(s->body), other = tempStack(s->elseBody);
+    if (inner > most)
+      most = inner;
+    if (other > most)
+      most = other;
+  }
+  return most;
+}
+
+// Largest parameter block plus callee stack use over the calls in s.
+static long long callStack(Stmt *s, long long *use, int *calleeTooBig) {
+  long long most = 0;
+  for (; s; s = s->next) {
+    if (s->kind == STMT_CALL && s->callee && s->callee->index < cur->index) {
+      long long need = s->callee->paramSize + use[s->callee->index];
+      if (need > most)
+        most = need;
+      if (use[s->callee->index] > MAX_STACK_USE)
+        *calleeTooBig = 1;
+    }
+    long long inner = callStack(s->body, use, calleeTooBig);
+    long long other = callStack(s->elseBody, use, calleeTooBig);
+    if (inner > most)
+      most = inner;
+    if (other > most)
+      most = other;
+  }
+  return most;
+}
+
+// Recursion is not allowed and callees come earlier in the file, so the
+// deepest stack use of each function can be computed in source order:
+// return address + saved rbp + locals + the larger of its temporaries and
+// (parameter block + stack use) of any function it calls.
+static void checkStackUse(void) {
+  long long *use = calloc(st->numFuncs, sizeof(long long));
+  for (int i = 0; i < st->numFuncs; i++) {
+    cur = st->funcs[i];
+    long long temp = tempStack(cur->ast->stmts);
+    long long returned = 0;
+    for (int k = 0; k < cur->numOutputs; k++)
+      if (cur->outputs[k])
+        returned += cur->outputs[k]->type->size;
+    if (returned > temp)
+      temp = returned;
+    int calleeTooBig = 0;
+    long long calls = callStack(cur->ast->stmts, use, &calleeTooBig);
+    use[i] = 16 + cur->localSize + (calls > temp ? calls : temp);
+    if (use[i] > MAX_STACK_USE && !calleeTooBig)
+      semError(cur->line,
+               "%s needs about %lld bytes of stack, counting the functions "
+               "it calls; the limit is %d",
+               cur->name, use[i], MAX_STACK_USE);
+  }
+  free(use);
+}
+
 /* ------------------------------------------------------------ entry point */
 
 SymbolTable *semanticAnalysis(Program *p, int *numErrors, FILE *out) {
@@ -866,6 +941,7 @@ SymbolTable *semanticAnalysis(Program *p, int *numErrors, FILE *out) {
     checkStmts(cur->ast->stmts);
     checkReturn(cur);
   }
+  checkStackUse();
   free(undeclared);
   undeclared = NULL;
   numUndeclared = capUndeclared = 0;

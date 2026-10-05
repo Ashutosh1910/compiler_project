@@ -27,6 +27,7 @@
 // default 8 MiB stack.
 #define MAX_TYPE_SIZE (1 << 20)  // one record or union: 1 MiB
 #define MAX_FRAME_SIZE (1 << 22) // locals, or parameters, of a function: 4 MiB
+#define MAX_STACK_USE (6 << 20)  // deepest call chain, of the usual 8 MiB stack
 
 typedef enum { TY_INT, TY_REAL, TY_RECORD, TY_UNION, TY_ERROR } TypeKind;
 

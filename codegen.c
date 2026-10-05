@@ -97,17 +97,35 @@ static int countLeaves(Type *t) {
   return n;
 }
 
-// Every qword is pushed before any is stored, so the copy is correct even
-// when source and destination overlap (two members of one union).
+// Copies size bytes between two memory operands that do not overlap: small
+// blocks qword by qword, large ones with rep movsq. Clobbers rax, rcx, rsi
+// and rdi.
+static void blockMove(const char *dst, const char *src, int size) {
+  emit("lea rdi, %s", dst);
+  emit("lea rsi, %s", src);
+  if (size <= 8 * SCALAR_SIZE) {
+    for (int k = 0; k < size; k += SCALAR_SIZE) {
+      emit("mov rax, qword [rsi + %d]", k);
+      emit("mov qword [rdi + %d], rax", k);
+    }
+  } else {
+    emit("mov rcx, %d", size / SCALAR_SIZE);
+    emit("rep movsq");
+  }
+}
+
+// The value is staged on the stack before any of it is stored, so the copy
+// is correct even when source and destination overlap (two members of one
+// union).
 static void copyBytes(const char *what, int size, VarEntry *src, int srcOff,
                       VarEntry *dst, int dstOff) {
   if (src == dst && srcOff == dstOff)
     return;
   emit("; copy %s (%d bytes)", what, size);
-  for (int k = 0; k < size; k += SCALAR_SIZE)
-    emit("push qword %s", addr(src, srcOff + k));
-  for (int k = size - SCALAR_SIZE; k >= 0; k -= SCALAR_SIZE)
-    emit("pop qword %s", addr(dst, dstOff + k));
+  emit("sub rsp, %d", size);
+  blockMove("[rsp]", addr(src, srcOff), size);
+  blockMove(addr(dst, dstOff), "[rsp]", size);
+  emit("add rsp, %d", size);
 }
 
 static Leaf *leavesOf(Type *t, int *n) {
@@ -429,22 +447,23 @@ static void genCall(Stmt *s) {
   FuncEntry *f = s->callee;
   if (f->paramSize > 0)
     emit("sub rsp, %d", f->paramSize);
+  char slot[48];
   for (int i = 0; i < f->numInputs; i++) {
     VarEntry *formal = f->inputs[i], *actual = s->ins.ids[i].entry;
-    for (int k = 0; k < formal->type->size; k += SCALAR_SIZE) {
-      emit("mov rax, qword %s", addr(actual, k));
-      emit("mov qword [rsp + %d], rax", formal->offset + k);
-    }
+    snprintf(slot, sizeof(slot), "[rsp + %d]", formal->offset);
+    blockMove(slot, addr(actual, 0), formal->type->size);
   }
-  for (int k = f->inSize; k < f->paramSize; k += SCALAR_SIZE)
-    emit("mov qword [rsp + %d], 0", k);
+  if (f->paramSize > f->inSize) { // zero the outputs (and the padding)
+    emit("lea rdi, [rsp + %d]", f->inSize);
+    emit("mov rcx, %d", (f->paramSize - f->inSize) / SCALAR_SIZE);
+    emit("xor eax, eax");
+    emit("rep stosq");
+  }
   emit("call F%s", f->name);
   for (int i = 0; i < f->numOutputs; i++) {
     VarEntry *formal = f->outputs[i], *actual = s->outs.ids[i].entry;
-    for (int k = 0; k < formal->type->size; k += SCALAR_SIZE) {
-      emit("mov rax, qword [rsp + %d]", formal->offset + k);
-      emit("mov qword %s, rax", addr(actual, k));
-    }
+    snprintf(slot, sizeof(slot), "[rsp + %d]", formal->offset);
+    blockMove(addr(actual, 0), slot, formal->type->size);
   }
   if (f->paramSize > 0)
     emit("add rsp, %d", f->paramSize);
@@ -523,15 +542,23 @@ static void genFunction(FuncEntry *f) {
   // every value is pushed before any slot is written.
   fprintf(out, "    ; line %d: return\n", f->ast->returnLine);
   IdList *ret = &f->ast->returns;
-  for (int i = 0; i < ret->count; i++) {
-    VarEntry *v = ret->ids[i].entry;
-    for (int k = 0; k < v->type->size; k += SCALAR_SIZE)
-      emit("push qword %s", addr(v, k));
-  }
-  for (int i = ret->count - 1; i >= 0; i--) {
-    VarEntry *formal = f->outputs[i];
-    for (int k = formal->type->size - SCALAR_SIZE; k >= 0; k -= SCALAR_SIZE)
-      emit("pop qword %s", addr(formal, k));
+  int total = 0;
+  for (int i = 0; i < ret->count; i++)
+    total += f->outputs[i]->type->size;
+  if (total > 0) {
+    char slot[48];
+    emit("sub rsp, %d", total);
+    for (int i = 0, off = 0; i < ret->count; i++) {
+      snprintf(slot, sizeof(slot), "[rsp + %d]", off);
+      blockMove(slot, addr(ret->ids[i].entry, 0), f->outputs[i]->type->size);
+      off += f->outputs[i]->type->size;
+    }
+    for (int i = 0, off = 0; i < ret->count; i++) {
+      snprintf(slot, sizeof(slot), "[rsp + %d]", off);
+      blockMove(addr(f->outputs[i], 0), slot, f->outputs[i]->type->size);
+      off += f->outputs[i]->type->size;
+    }
+    emit("add rsp, %d", total);
   }
   if (f->isMain)
     emit("xor eax, eax");

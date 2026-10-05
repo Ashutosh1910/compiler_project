@@ -24,10 +24,20 @@ _main
 		type #nowhere : a; %? error: undefined type #nowhere for field a of #bad
 		type int : b;
 	endrecord
+	union #uu
+		type int : a;
+		type real : b;
+	endunion
+	record #wrap
+		type int : tag;
+		type #uu : val;
+	endrecord
 	definetype record #missing as #m %? error: undefined type #missing in definetype
 	definetype union #pt as #pu %? error: definetype union #pt: #pt is a record
 	definetype record #pt as #bad %? error: type name #bad is already defined at line 23
 	type #ghost : b2; %? error: undefined type #ghost
 	type union #pt : b3; %? error: #pt is a record, not a union
+	type record #uu : b4; %? error: #uu is a union, not a record
+	type record #wrap : b5;
 	return;
 end

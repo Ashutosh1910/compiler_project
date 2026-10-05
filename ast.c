@@ -171,13 +171,26 @@ static Expr *newBinop(TreeNode *opNode, Expr *l, Expr *r) {
   return e;
 }
 
+static void freeExpr(Expr *e);
+
+// Folds one more operator onto acc. Past MAX_EXPR_DEPTH the operand is
+// dropped instead: the expression is rejected anyway, and this keeps every
+// recursive pass over the tree shallow.
+static Expr *fold(TreeNode *opNode, Expr *acc, Expr *operand) {
+  if (acc->depth > MAX_EXPR_DEPTH || operand->depth > MAX_EXPR_DEPTH) {
+    freeExpr(operand);
+    return acc;
+  }
+  return newBinop(opNode, acc, operand);
+}
+
 // <term> ::= <factor> <termPrime>
 // <termPrime> ::= <highPrecedenceOperators> <factor> <termPrime> | eps
 // The primes are folded left so that a / b / c means (a / b) / c.
 static Expr *buildTerm(TreeNode *n) {
   Expr *acc = buildFactor(kid(n, 0));
   for (TreeNode *p = kid(n, 1); !isEpsilon(p); p = kid(p, 2))
-    acc = newBinop(kid(p, 0), acc, buildFactor(kid(p, 1)));
+    acc = fold(kid(p, 0), acc, buildFactor(kid(p, 1)));
   return acc;
 }
 
@@ -186,7 +199,7 @@ static Expr *buildTerm(TreeNode *n) {
 static Expr *buildArith(TreeNode *n) {
   Expr *acc = buildTerm(kid(n, 0));
   for (TreeNode *p = kid(n, 1); !isEpsilon(p); p = kid(p, 2))
-    acc = newBinop(kid(p, 0), acc, buildTerm(kid(p, 1)));
+    acc = fold(kid(p, 0), acc, buildTerm(kid(p, 1)));
   return acc;
 }
 
