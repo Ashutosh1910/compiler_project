@@ -65,6 +65,12 @@ typedef enum TokenType {
   TK_GT,
   TK_GE,
   TK_NE,
+  TK_READCHAR,
+  TK_WRITECHAR,
+  TK_PRINT,
+  TK_EXIT,
+  TK_CHARLIT,
+  TK_STR,
   TK_EPS,
   TK_DOLLAR,
   TK_ERROR,
@@ -76,7 +82,9 @@ typedef struct Token {
   char lexeme[31];
   unsigned int lexemeSize;
   unsigned int lineNo;
-
+  // TK_STR: index of the decoded string in the lexer's string table (the
+  // lexeme keeps only the first 30 bytes of the spelling); -1 otherwise
+  int literal;
 } Token;
 
 typedef struct TokenList {

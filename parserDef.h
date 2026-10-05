@@ -8,9 +8,9 @@
 
 #include "lexerDef.h"
 #define TERM_MAP_CAP 128
-#define MAX_RULES 100
+#define MAX_RULES 128
 #define MAX_RHS 20
-#define MAX_NON_TERMINALS 60
+#define MAX_NON_TERMINALS 64
 #define MAX_SYMBOL_NAME                                                        \
   64 // preferring to store known sized(or know max size) strings in stack for
      // faster memory access
@@ -57,6 +57,7 @@ typedef struct TreeNode {
   char lexeme[31];
   int lineNo;
   int ruleIndex;
+  int literal; // TK_STR leaf: index into the lexer's string table, else -1
   struct TreeNode *firstChild;
   struct TreeNode
       *nextSibling; // we used this struct for syntax as each node can have

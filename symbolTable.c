@@ -59,6 +59,9 @@ void freeSymbolTable(SymbolTable *st) {
     free(st->types[i]);
   }
   free(st->types);
+  for (int i = 0; i < st->numArrays; i++)
+    free(st->arrays[i]);
+  free(st->arrays);
   free(st->aliases);
   freeVars(st->globals);
   for (int i = 0; i < st->numFuncs; i++) {
@@ -83,6 +86,27 @@ Type *addType(SymbolTable *st, TypeKind kind, const char *name, int line) {
   snprintf(t->name, AST_NAME_LEN, "%s", name);
   t->line = line;
   st->types[st->numTypes++] = t;
+  return t;
+}
+
+// Array types are shared, so two int[10] variables have the very same Type
+// (the same way aliases share their record).
+Type *arrayType(SymbolTable *st, Type *elem, int length) {
+  for (int i = 0; i < st->numArrays; i++)
+    if (st->arrays[i]->elem == elem && st->arrays[i]->length == length)
+      return st->arrays[i];
+  if (st->numArrays == st->capArrays)
+    st->arrays = grow(st->arrays, &st->capArrays, sizeof(Type *));
+  Type *t = xmalloc0(sizeof(Type));
+  t->kind = TY_ARRAY;
+  // elements are int or real, so the name is at most "real[131072]"
+  snprintf(t->name, AST_NAME_LEN, "%s[%d]",
+           elem->kind == TY_INT ? "int" : "real", length);
+  t->elem = elem;
+  t->length = length;
+  t->size = SCALAR_SIZE * length;
+  t->layoutState = 2;
+  st->arrays[st->numArrays++] = t;
   return t;
 }
 

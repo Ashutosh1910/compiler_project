@@ -146,7 +146,7 @@ TEST(test_bitset) {
   bs_add(&a, 64);
   bs_add(&a, NUM_TOKENS - 1);
   CHECK(bs_contains(&a, 0) && bs_contains(&a, 63) && bs_contains(&a, 64));
-  CHECK(!bs_contains(&a, 1) && !bs_contains(&a, 65));
+  CHECK(!bs_contains(&a, 1) && !bs_contains(&a, 62));
   CHECK(!bs_is_empty(&a));
   CHECK_EQ_INT(bs_union(&b, &a), 1);
   CHECK_EQ_INT(bs_union(&b, &a), 0); // nothing new the second time
@@ -155,7 +155,7 @@ TEST(test_bitset) {
   bs_add(&a, TK_EPS);
   bs_union_no_eps(&c, &a);
   CHECK(!bs_contains(&c, TK_EPS));
-  CHECK(bs_contains(&c, 63));
+  CHECK(bs_contains(&c, 64));
 }
 
 TEST(test_keywords) {
@@ -236,6 +236,55 @@ TEST(test_scan_missing_file) {
   free(tl.buf);
 }
 
+TEST(test_char_literal_value) {
+  CHECK_EQ_INT(charLiteralValue("'a'"), 97);
+  CHECK_EQ_INT(charLiteralValue("'\\n'"), 10);
+  CHECK_EQ_INT(charLiteralValue("'\\t'"), 9);
+  CHECK_EQ_INT(charLiteralValue("'\\r'"), 13);
+  CHECK_EQ_INT(charLiteralValue("'\\0'"), 0);
+  CHECK_EQ_INT(charLiteralValue("'\\\\'"), 92);
+  CHECK_EQ_INT(charLiteralValue("'\\''"), 39);
+  CHECK_EQ_INT(charLiteralValue("'\"'"), 34);
+  CHECK_EQ_INT(charLiteralValue("'\\\"'"), 34);
+  CHECK_EQ_INT(charLiteralValue("' '"), 32);
+}
+
+TEST(test_string_literal_table) {
+  int errors;
+  TokenList tl = lex("print(\"a\\tb\\n\");", &errors);
+  CHECK_EQ_INT(errors, 0);
+  int strings = 0;
+  for (int i = 0; i < tl.size; i++) {
+    if (tl.buf[i].type != TK_STR) {
+      CHECK_EQ_INT(tl.buf[i].literal, -1);
+      continue;
+    }
+    strings++;
+    int len;
+    const char *text = stringLiteralText(tl.buf[i].literal, &len);
+    CHECK_EQ_INT(len, 4);
+    CHECK(memcmp(text, "a\tb\n", 4) == 0);
+    CHECK_EQ_STR(tl.buf[i].lexeme, "\"a\\tb\\n\"");
+  }
+  CHECK_EQ_INT(strings, 1);
+  free(tl.buf);
+}
+
+TEST(test_new_keywords) {
+  CHECK_EQ_INT(terminalFromString("TK_READCHAR"), TK_READCHAR);
+  CHECK_EQ_INT(terminalFromString("TK_WRITECHAR"), TK_WRITECHAR);
+  CHECK_EQ_INT(terminalFromString("TK_PRINT"), TK_PRINT);
+  CHECK_EQ_INT(terminalFromString("TK_EXIT"), TK_EXIT);
+  CHECK_EQ_INT(terminalFromString("TK_CHARLIT"), TK_CHARLIT);
+  CHECK_EQ_INT(terminalFromString("TK_STR"), TK_STR);
+  Hashmap h = initializeKeywordMap();
+  CHECK_EQ_INT(lookupKeyword(&h, "readchar"), TK_READCHAR);
+  CHECK_EQ_INT(lookupKeyword(&h, "writechar"), TK_WRITECHAR);
+  CHECK_EQ_INT(lookupKeyword(&h, "print"), TK_PRINT);
+  CHECK_EQ_INT(lookupKeyword(&h, "exit"), TK_EXIT);
+  CHECK_EQ_INT(lookupKeyword(&h, "prints"), TK_ERROR);
+}
+
 /* ---------------------------------------------------------------- grammar */
 
 TEST(test_terminal_names) {
@@ -250,8 +299,8 @@ TEST(test_terminal_names) {
 
 TEST(test_grammar_loaded) {
   CHECK(grammar != NULL);
-  CHECK_EQ_INT(grammar->numNT, 53);
-  CHECK_EQ_INT(grammar->numRules, 95);
+  CHECK_EQ_INT(grammar->numNT, 58);
+  CHECK_EQ_INT(grammar->numRules, 113);
   CHECK_EQ_STR(getNTName(grammar, 0), "program");
   CHECK_EQ_STR(getNTName(grammar, -1), "?");
   // <program> ::= <otherFunctions> <mainFunction>
@@ -269,7 +318,7 @@ TEST(test_grammar_loaded) {
         epsRules++;
         CHECK_EQ_INT(grammar->rules[i].rhsLen, 1);
       }
-  CHECK_EQ_INT(epsRules, 15);
+  CHECK_EQ_INT(epsRules, 17);
   // no terminal in the grammar is unknown
   for (int i = 0; i < grammar->numRules; i++)
     for (int j = 0; j < grammar->rules[i].rhsLen; j++)
@@ -280,44 +329,48 @@ TEST(test_grammar_loaded) {
 TEST(test_first_sets) {
   int program[] = {TK_FUNID, TK_MAIN, END};
   CHECK(setIs(&ff.first[nt("program")], program));
-  int stmt[] = {TK_ID,    TK_WHILE, TK_IF, TK_READ,
-                TK_WRITE, TK_SQL,   TK_CALL, END};
+  int stmt[] = {TK_ID, TK_WHILE, TK_IF, TK_READ, TK_WRITE, TK_READCHAR,
+                TK_WRITECHAR, TK_PRINT, TK_SQL, TK_CALL, TK_EXIT, END};
   CHECK(setIs(&ff.first[nt("stmt")], stmt));
-  int otherStmts[] = {TK_ID,    TK_WHILE, TK_IF,   TK_READ,
-                      TK_WRITE, TK_SQL,   TK_CALL, TK_EPS, END};
+  int otherStmts[] = {TK_ID, TK_WHILE, TK_IF, TK_READ, TK_WRITE, TK_READCHAR,
+                      TK_WRITECHAR, TK_PRINT, TK_SQL, TK_CALL, TK_EXIT,
+                      TK_EPS, END};
   CHECK(setIs(&ff.first[nt("otherStmts")], otherStmts));
-  int boolExpr[] = {TK_OP, TK_NOT, TK_ID, TK_NUM, TK_RNUM, END};
+  int boolExpr[] = {TK_OP, TK_NOT, TK_ID, TK_NUM, TK_RNUM, TK_CHARLIT, END};
   CHECK(setIs(&ff.first[nt("booleanExpression")], boolExpr));
   int typeDefs[] = {TK_RECORD, TK_UNION, TK_DEFINETYPE, TK_EPS, END};
   CHECK(setIs(&ff.first[nt("typeDefinitions")], typeDefs));
   int stmts[] = {TK_RECORD, TK_UNION, TK_DEFINETYPE, TK_TYPE, TK_ID,
-                 TK_WHILE,  TK_IF,    TK_READ,       TK_WRITE, TK_SQL,
-                 TK_CALL,   TK_RETURN, END};
+                 TK_WHILE, TK_IF, TK_READ, TK_WRITE, TK_READCHAR,
+                 TK_WRITECHAR, TK_PRINT, TK_SQL, TK_CALL, TK_EXIT,
+                 TK_RETURN, END};
   CHECK(setIs(&ff.first[nt("stmts")], stmts));
   int dataType[] = {TK_INT, TK_REAL, TK_RECORD, TK_UNION, TK_RUID, END};
   CHECK(setIs(&ff.first[nt("dataType")], dataType));
-  int optSingle[] = {TK_DOT, TK_EPS, END};
+  int optSingle[] = {TK_DOT, TK_SQL, TK_EPS, END};
   CHECK(setIs(&ff.first[nt("option_single_constructed")], optSingle));
-  int arith[] = {TK_OP, TK_ID, TK_NUM, TK_RNUM, END};
+  int arith[] = {TK_OP, TK_ID, TK_NUM, TK_RNUM, TK_CHARLIT, END};
   CHECK(setIs(&ff.first[nt("arithmeticExpression")], arith));
 }
 
 TEST(test_follow_sets) {
   int program[] = {TK_DOLLAR, END};
   CHECK(setIs(&ff.follow[nt("program")], program));
-  int arith[] = {TK_SEM, TK_CL, END};
+  // arithmeticExpression and expPrime
+  int arith[] = {TK_SEM, TK_CL, TK_SQR, TK_COMMA, END};
   CHECK(setIs(&ff.follow[nt("arithmeticExpression")], arith));
   CHECK(setIs(&ff.follow[nt("expPrime")], arith));
-  int termPrime[] = {TK_PLUS, TK_MINUS, TK_SEM, TK_CL, END};
+  int termPrime[] = {TK_PLUS, TK_MINUS, TK_SEM, TK_CL, TK_SQR, TK_COMMA, END};
   CHECK(setIs(&ff.follow[nt("termPrime")], termPrime));
   int otherStmts[] = {TK_RETURN, TK_ENDWHILE, TK_ENDIF, TK_ELSE, END};
   CHECK(setIs(&ff.follow[nt("otherStmts")], otherStmts));
-  int decls[] = {TK_ID,    TK_WHILE, TK_IF,   TK_READ,  TK_WRITE,
-                 TK_SQL,   TK_CALL,  TK_RETURN, END};
+  int decls[] = {TK_ID, TK_WHILE, TK_IF, TK_READ, TK_WRITE, TK_READCHAR,
+                 TK_WRITECHAR, TK_PRINT, TK_EXIT, TK_SQL, TK_CALL,
+                 TK_RETURN, END};
   CHECK(setIs(&ff.follow[nt("declarations")], decls));
   int singleOrRec[] = {TK_ASSIGNOP, TK_MUL, TK_DIV, TK_PLUS, TK_MINUS,
-                       TK_SEM,      TK_CL,  TK_LT,  TK_LE,   TK_EQ,
-                       TK_GT,       TK_GE,  TK_NE,  END};
+                       TK_SEM, TK_CL, TK_SQR, TK_COMMA, TK_LT, TK_LE,
+                       TK_EQ, TK_GT, TK_GE, TK_NE, END};
   CHECK(setIs(&ff.follow[nt("singleOrRecId")], singleOrRec));
   int otherFunctions[] = {TK_MAIN, END};
   CHECK(setIs(&ff.follow[nt("otherFunctions")], otherFunctions));
@@ -679,6 +732,66 @@ TEST(test_semantic_error_counts) {
   freeCompilation(&c);
 }
 
+static const char *ARRAYS =
+    "_rec input parameter list [int b2]\n"
+    "output parameter list [int b3];\n"
+    "  type int[4] : c2;\n"
+    "  [b3] <--- call _rec with parameters [b2];\n"
+    "  return [b3];\n"
+    "end\n"
+    "_leaf input parameter list [int b2];\n"
+    "  return;\n"
+    "end\n"
+    "_main\n"
+    "  type int[10] : b2;\n"
+    "  type int[10] : d2 : global;\n"
+    "  type real[010] : c2;\n"
+    "  type int : b3;\n"
+    "  c2[b3 + 1] <--- b2[0] * 0 + 1;\n"
+    "  call _leaf with parameters [b3];\n"
+    "  [b3] <--- call _rec with parameters [b3];\n"
+    "  return;\n"
+    "end\n";
+
+TEST(test_array_types) {
+  Compilation c;
+  CHECK(analyse(ARRAYS, &c));
+  SymbolTable *st = c.symbols;
+  FuncEntry *m = findFunc(st, "_main");
+  VarEntry *b2 = findLocal(m, "b2"), *d2 = findGlobal(st, "d2");
+  VarEntry *c2 = findLocal(m, "c2");
+  CHECK(b2 && d2 && c2);
+  // interned per (element type, length): both int[10] share one Type
+  CHECK(b2->type == d2->type);
+  CHECK(b2->type != c2->type);
+  CHECK_EQ_INT(b2->type->kind, TY_ARRAY);
+  CHECK_EQ_STR(b2->type->name, "int[10]");
+  CHECK_EQ_STR(c2->type->name, "real[10]"); // leading zero in the length
+  CHECK(b2->type->elem == st->intType);
+  CHECK_EQ_INT(b2->type->size, 80);
+  CHECK(!isScalar(b2->type) && !isAggregate(b2->type));
+  CHECK_EQ_INT(b2->offset, 80); // laid out like a record
+  CHECK_EQ_INT(m->localSize, 176);
+  // the element access has the element type and keeps its index
+  Stmt *s = m->ast->stmts;
+  CHECK(s->lhs.index != NULL);
+  CHECK(s->lhs.type == st->realType);
+  CHECK_EQ_INT(s->lhs.index->kind, EXPR_BINOP);
+  CHECK(s->rhs->left->left->var.type == st->intType);
+  freeCompilation(&c);
+}
+
+TEST(test_stack_need) {
+  Compilation c;
+  CHECK(analyse(ARRAYS, &c));
+  // need = 16 + locals + max(temporaries, largest parameter block)
+  FuncEntry *rec = findFunc(c.symbols, "_rec");
+  FuncEntry *leaf = findFunc(c.symbols, "_leaf");
+  CHECK_EQ_INT(rec->stackNeed, 16 + 32 + 8 * (MAX_EXPR_DEPTH + 2));
+  CHECK_EQ_INT(leaf->stackNeed, 16 + 0 + 8 * (MAX_EXPR_DEPTH + 2));
+  freeCompilation(&c);
+}
+
 int main(void) {
   grammar = loadGrammar("grammar.txt");
   if (!grammar) {
@@ -693,6 +806,9 @@ int main(void) {
   RUN(test_scan_token_stream);
   RUN(test_scan_grows_buffer);
   RUN(test_scan_missing_file);
+  RUN(test_char_literal_value);
+  RUN(test_string_literal_table);
+  RUN(test_new_keywords);
   RUN(test_terminal_names);
   RUN(test_grammar_loaded);
   RUN(test_first_sets);
@@ -709,6 +825,8 @@ int main(void) {
   RUN(test_variable_layout);
   RUN(test_semantic_annotations);
   RUN(test_semantic_error_counts);
+  RUN(test_array_types);
+  RUN(test_stack_need);
 
   freeGrammar(grammar);
   printf("%d checks, %d failures\n", checks, failures);

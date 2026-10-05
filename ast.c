@@ -7,6 +7,7 @@
 // Parse tree -> AST. Every builder below handles exactly one non-terminal of
 // grammar.txt; the comment above each one quotes the production(s) it reads.
 #include "ast.h"
+#include "lexer.h"
 #include "logging.h"
 #include <stdlib.h>
 #include <string.h>
@@ -91,10 +92,14 @@ static AstTypeRef buildTypeRef(TreeNode *n) {
 
 /* ------------------------------------------------------------- variables */
 
+static Expr *buildArith(TreeNode *n);
+
 // <singleOrRecId> ::= TK_ID <option_single_constructed>
 // <option_single_constructed> ::= eps | <oneExpansion> <moreExpansions>
-// <oneExpansion> ::= TK_DOT TK_FIELDID
+//                               | TK_SQL <arithmeticExpression> TK_SQR
+// <oneExpansion> ::= TK_DOT <fieldName>
 // <moreExpansions> ::= <oneExpansion> <moreExpansions> | eps
+// <fieldName> ::= TK_FIELDID | TK_READCHAR | TK_WRITECHAR | TK_PRINT | TK_EXIT
 static AstVarRef buildVarRef(TreeNode *n) {
   AstVarRef v;
   memset(&v, 0, sizeof(v));
@@ -102,8 +107,13 @@ static AstVarRef buildVarRef(TreeNode *n) {
   copyName(v.name, id->lexeme);
   v.line = id->lineNo;
 
-  // count the fields first, then copy them
   TreeNode *opt = kid(n, 1);
+  if (isTok(kid(opt, 0), TK_SQL)) {
+    v.index = buildArith(kid(opt, 1));
+    return v;
+  }
+
+  // count the fields first, then copy them
   int count = 0;
   if (!isEpsilon(opt)) {
     count = 1;
@@ -116,7 +126,7 @@ static AstVarRef buildVarRef(TreeNode *n) {
     TreeNode *one = kid(opt, 0);
     TreeNode *more = kid(opt, 1);
     for (int i = 0; i < count; i++) {
-      copyName(v.fields[i], kid(one, 1)->lexeme);
+      copyName(v.fields[i], kid(kid(one, 1), 0)->lexeme);
       if (i + 1 < count) {
         one = kid(more, 0);
         more = kid(more, 1);
@@ -135,9 +145,27 @@ static Expr *newExpr(ExprKind kind, int line) {
   return e;
 }
 
-// <var> ::= <singleOrRecId> | TK_NUM | TK_RNUM
+// an EXPR_VAR for a <singleOrRecId>; an element access is one level deeper
+// than its index
+static Expr *buildRefExpr(TreeNode *n) {
+  Expr *e = newExpr(EXPR_VAR, kid(n, 0)->lineNo);
+  e->var = buildVarRef(n);
+  if (e->var.index)
+    e->depth = 1 + e->var.index->depth;
+  return e;
+}
+
+// <var> ::= <singleOrRecId> | TK_NUM | TK_RNUM | TK_CHARLIT
 static Expr *buildVarExpr(TreeNode *n) {
   TreeNode *c = kid(n, 0);
+  if (isTok(c, TK_CHARLIT)) {
+    // an int constant that keeps its spelling for --ast
+    Expr *e = newExpr(EXPR_NUM, c->lineNo);
+    copyName(e->text, c->lexeme);
+    e->ival = charLiteralValue(c->lexeme);
+    e->isChar = 1;
+    return e;
+  }
   if (isTok(c, TK_NUM) || isTok(c, TK_RNUM)) {
     Expr *e = newExpr(isTok(c, TK_NUM) ? EXPR_NUM : EXPR_RNUM, c->lineNo);
     copyName(e->text, c->lexeme);
@@ -147,12 +175,8 @@ static Expr *buildVarExpr(TreeNode *n) {
       e->rval = strtod(c->lexeme, NULL);
     return e;
   }
-  Expr *e = newExpr(EXPR_VAR, kid(c, 0)->lineNo);
-  e->var = buildVarRef(c);
-  return e;
+  return buildRefExpr(c);
 }
-
-static Expr *buildArith(TreeNode *n);
 
 // <factor> ::= TK_OP <arithmeticExpression> TK_CL | <var>
 static Expr *buildFactor(TreeNode *n) {
@@ -278,8 +302,36 @@ static Stmt *newStmt(StmtKind kind, int line) {
   return s;
 }
 
+// <printItem> ::= TK_STR | <arithmeticExpression>
+// <morePrintItems> ::= TK_COMMA <printItem> <morePrintItems> | eps
+static PrintItem *buildPrintItems(TreeNode *item, TreeNode *more) {
+  PrintItem *head = NULL, **tail = &head;
+  for (;;) {
+    PrintItem *it = xcalloc(1, sizeof(PrintItem));
+    TreeNode *c = kid(item, 0);
+    if (isTok(c, TK_STR)) {
+      // the lexer's string table is cleared by the next scan, so copy
+      int len;
+      const char *text = stringLiteralText(c->literal, &len);
+      it->isString = 1;
+      it->len = len;
+      it->text = xcalloc(len + 1, 1);
+      memcpy(it->text, text, len);
+    } else {
+      it->expr = buildArith(c);
+    }
+    *tail = it;
+    tail = &it->next;
+    if (isEpsilon(more))
+      break;
+    item = kid(more, 1);
+    more = kid(more, 2);
+  }
+  return head;
+}
+
 // <stmt> ::= <assignmentStmt> | <iterativeStmt> | <conditionalStmt>
-//          | <ioStmt> | <funCallStmt>
+//          | <ioStmt> | <funCallStmt> | <exitStmt>
 static Stmt *buildStmt(TreeNode *n) {
   TreeNode *c = kid(n, 0);
   Stmt *s;
@@ -311,9 +363,27 @@ static Stmt *buildStmt(TreeNode *n) {
     }
   } else if (isNT(c, "ioStmt")) {
     // TK_READ TK_OP <var> TK_CL TK_SEM | TK_WRITE TK_OP <var> TK_CL TK_SEM
+    // | TK_READCHAR TK_OP <singleOrRecId> TK_CL TK_SEM
+    // | TK_WRITECHAR TK_OP <arithmeticExpression> TK_CL TK_SEM
+    // | TK_PRINT TK_OP <printItem> <morePrintItems> TK_CL TK_SEM
     TreeNode *kw = kid(c, 0);
-    s = newStmt(isTok(kw, TK_READ) ? STMT_READ : STMT_WRITE, kw->lineNo);
-    s->ioArg = buildVarExpr(kid(c, 2));
+    if (isTok(kw, TK_READCHAR)) {
+      s = newStmt(STMT_READCHAR, kw->lineNo);
+      s->ioArg = buildRefExpr(kid(c, 2));
+    } else if (isTok(kw, TK_WRITECHAR)) {
+      s = newStmt(STMT_WRITECHAR, kw->lineNo);
+      s->ioArg = buildArith(kid(c, 2));
+    } else if (isTok(kw, TK_PRINT)) {
+      s = newStmt(STMT_PRINT, kw->lineNo);
+      s->items = buildPrintItems(kid(c, 2), kid(c, 3));
+    } else {
+      s = newStmt(isTok(kw, TK_READ) ? STMT_READ : STMT_WRITE, kw->lineNo);
+      s->ioArg = buildVarExpr(kid(c, 2));
+    }
+  } else if (isNT(c, "exitStmt")) {
+    // TK_EXIT TK_OP <arithmeticExpression> TK_CL TK_SEM
+    s = newStmt(STMT_EXIT, kid(c, 0)->lineNo);
+    s->ioArg = buildArith(kid(c, 2));
   } else {
     // <funCallStmt> ::= <outputParameters> TK_CALL TK_FUNID TK_WITH
     //                   TK_PARAMETERS <inputParameters> TK_SEM
@@ -354,12 +424,13 @@ static Decl *buildParams(TreeNode *n) {
   return head;
 }
 
-// <fieldDefinition> ::= TK_TYPE <fieldType> TK_COLON TK_FIELDID TK_SEM
+// <fieldDefinition> ::= TK_TYPE <fieldType> TK_COLON <fieldName> TK_SEM
 static FieldDef *buildField(TreeNode *n) {
   FieldDef *f = xcalloc(1, sizeof(FieldDef));
+  TreeNode *name = kid(kid(n, 3), 0);
   f->type = buildTypeRef(kid(n, 1));
-  copyName(f->name, kid(n, 3)->lexeme);
-  f->line = kid(n, 3)->lineNo;
+  copyName(f->name, name->lexeme);
+  f->line = name->lineNo;
   return f;
 }
 
@@ -414,15 +485,22 @@ static void buildBody(TreeNode *n, Function *f) {
   }
 
   // <declarations> ::= <declaration> <declarations> | eps
-  // <declaration> ::= TK_TYPE <dataType> TK_COLON TK_ID <global_or_not> TK_SEM
+  // <declaration> ::= TK_TYPE <dataType> <arrayDim> TK_COLON TK_ID
+  //                   <global_or_not> TK_SEM
+  // <arrayDim> ::= TK_SQL TK_NUM TK_SQR | eps
   // <global_or_not> ::= TK_COLON TK_GLOBAL | eps
   for (TreeNode *p = kid(n, 1); !isEpsilon(p); p = kid(p, 1)) {
     TreeNode *d = kid(p, 0);
     Decl *decl = xcalloc(1, sizeof(Decl));
     decl->type = buildTypeRef(kid(d, 1));
-    copyName(decl->name, kid(d, 3)->lexeme);
-    decl->line = kid(d, 3)->lineNo;
-    decl->isGlobal = !isEpsilon(kid(d, 4));
+    TreeNode *dim = kid(d, 2);
+    if (!isEpsilon(dim)) {
+      decl->isArray = 1;
+      copyName(decl->lengthText, kid(dim, 1)->lexeme);
+    }
+    copyName(decl->name, kid(d, 4)->lexeme);
+    decl->line = kid(d, 4)->lineNo;
+    decl->isGlobal = !isEpsilon(kid(d, 5));
     appendDecl(&f->decls, decl);
   }
 
@@ -485,6 +563,7 @@ static void freeExpr(Expr *e) {
     return;
   freeExpr(e->left);
   freeExpr(e->right);
+  freeExpr(e->var.index);
   free(e->var.fields);
   free(e);
 }
@@ -503,11 +582,19 @@ static void freeStmts(Stmt *s) {
   while (s) {
     Stmt *next = s->next;
     free(s->lhs.fields);
+    freeExpr(s->lhs.index);
     freeExpr(s->rhs);
     freeBool(s->cond);
     freeStmts(s->body);
     freeStmts(s->elseBody);
     freeExpr(s->ioArg);
+    for (PrintItem *it = s->items; it;) {
+      PrintItem *next = it->next;
+      free(it->text);
+      freeExpr(it->expr);
+      free(it);
+      it = next;
+    }
     free(s->outs.ids);
     free(s->ins.ids);
     free(s);
@@ -597,16 +684,40 @@ static void printTypeRef(FILE *out, AstTypeRef *t) {
     fputs(t->name, out);
 }
 
+static void printExpr(FILE *out, Expr *e);
+
 static void printVarRef(FILE *out, AstVarRef *v) {
   fputs(v->name, out);
   for (int i = 0; i < v->numFields; i++)
     fprintf(out, ".%s", v->fields[i]);
+  if (v->index) {
+    fputc('[', out);
+    printExpr(out, v->index);
+    fputc(']', out);
+  }
+}
+
+// a string item in double quotes, with the escapes that make it readable
+static void printString(FILE *out, const char *text, int len) {
+  fputc('"', out);
+  for (int i = 0; i < len; i++) {
+    switch (text[i]) {
+    case '\n': fputs("\\n", out); break;
+    case '\t': fputs("\\t", out); break;
+    case '\r': fputs("\\r", out); break;
+    case '\\': fputs("\\\\", out); break;
+    case '"': fputs("\\\"", out); break;
+    default: fputc(text[i], out);
+    }
+  }
+  fputc('"', out);
 }
 
 // expressions are printed fully parenthesised, which makes precedence and
 // associativity visible
 static void printExpr(FILE *out, Expr *e) {
-  if (e->depth > MAX_EXPR_DEPTH) {
+  // an element access is never truncated itself, only (maybe) its index
+  if (e->kind != EXPR_VAR && e->depth > MAX_EXPR_DEPTH) {
     fputs("<expression nested too deeply; truncated>", out);
     return;
   }
@@ -674,6 +785,29 @@ static void printStmts(FILE *out, Stmt *s, int depth) {
       printExpr(out, s->ioArg);
       fputc('\n', out);
       break;
+    case STMT_READCHAR:
+    case STMT_WRITECHAR:
+    case STMT_EXIT:
+      fprintf(out, "%s (line %d): ",
+              s->kind == STMT_READCHAR    ? "ReadChar"
+              : s->kind == STMT_WRITECHAR ? "WriteChar"
+                                          : "Exit",
+              s->line);
+      printExpr(out, s->ioArg);
+      fputc('\n', out);
+      break;
+    case STMT_PRINT:
+      fprintf(out, "Print (line %d): ", s->line);
+      for (PrintItem *it = s->items; it; it = it->next) {
+        if (it != s->items)
+          fputs(", ", out);
+        if (it->isString)
+          printString(out, it->text, it->len);
+        else
+          printExpr(out, it->expr);
+      }
+      fputc('\n', out);
+      break;
     case STMT_CALL:
       fprintf(out, "Call (line %d): ", s->line);
       if (s->outs.count) {
@@ -712,6 +846,8 @@ static void printDecls(FILE *out, const char *label, Decl *d, int depth) {
     indent(out, depth);
     fprintf(out, "%s %s : ", label, d->name);
     printTypeRef(out, &d->type);
+    if (d->isArray)
+      fprintf(out, "[%s]", d->lengthText);
     if (d->isGlobal)
       fputs(" (global)", out);
     fprintf(out, " (line %d)\n", d->line);

@@ -31,4 +31,10 @@ int isAlpha(char c);
 int isAlphaNum(char c);
 int isNum(char c);
 
+// value of a valid TK_CHARLIT spelling such as 'a' or '\n'
+int charLiteralValue(const char *lexeme);
+// string table of decoded TK_STR literals (cleared by initializeState)
+int addStringLiteral(const char *bytes, int len);
+const char *stringLiteralText(int index, int *len);
+
 

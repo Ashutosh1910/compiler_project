@@ -9,9 +9,15 @@
 //      be used in a function that appears before its definition)
 //   2. resolve definetype aliases (an alias may name a later alias)
 //   3. lay out records/unions (field offsets, sizes, recursion check)
-//   4. collect global variables from every function
+//   4. collect global variables from every function (arrays included)
 //   5. collect function signatures and locals, assign stack offsets
-//   6. type check every function body, in source order
+//   6. type check every function body, in source order; a function may call
+//      any function, itself and later ones included, because every signature
+//      is known after step 5
+//   7. check the stack use over the call graph: its strongly connected
+//      components (Tarjan) separate recursive functions, which get a check of
+//      one activation (plus a guard in the generated code), from the others,
+//      which are checked over their whole call chain
 #include "semantic.h"
 #include <errno.h>
 #include <stdarg.h>
@@ -86,7 +92,9 @@ static void setAdd(AccessSet *s, VarEntry *v, int offset, int size) {
 static void setAddRef(AccessSet *s, AstVarRef *r) {
   if (!r->entry)
     return;
-  if (r->type)
+  if (r->index) // no attempt to tell elements apart: the whole array
+    setAdd(s, r->entry, 0, r->entry->type->size);
+  else if (r->type)
     setAdd(s, r->entry, r->offset, r->type->size);
   else // a field that failed to resolve (already reported): assume the
        // whole variable may change, so no follow-on error is reported
@@ -280,9 +288,39 @@ static Type *resolveTypeRef(AstTypeRef *r) {
   return t;
 }
 
+// type of `type <elem>[<N>] : name`. Every error leaves the error type, so
+// later uses of the variable are silent.
+static Type *arrayVarType(Decl *d) {
+  // the length is checked as written: leading zeros are fine, and a number
+  // too big for any integer type is just too big
+  const char *digits = d->lengthText;
+  while (*digits == '0')
+    digits++;
+  long long length = 0;
+  for (const char *p = digits; *p && length <= MAX_ARRAY_LENGTH; p++)
+    length = length * 10 + (*p - '0');
+  int ok = 1;
+  if (length < 1 || length > MAX_ARRAY_LENGTH) {
+    semError(d->line, "array length must be between 1 and %d, not %s",
+             MAX_ARRAY_LENGTH, d->lengthText);
+    ok = 0;
+  }
+  Type *elem = resolveTypeRef(&d->type);
+  if (elem->kind == TY_ERROR)
+    return elem;
+  if (!isScalar(elem)) {
+    semError(d->line, "array element type must be int or real, not %s",
+             elem->name);
+    return st->errorType;
+  }
+  return ok ? arrayType(st, elem, (int)length) : st->errorType;
+}
+
 // variables may not have a union type directly: a union is only usable as a
 // field of a (variant) record
 static Type *variableType(Decl *d) {
+  if (d->isArray)
+    return arrayVarType(d);
   Type *t = resolveTypeRef(&d->type);
   if (t->kind == TY_UNION) {
     semError(d->line,
@@ -417,28 +455,76 @@ static void collectFunctions(Program *p) {
 
 /* ------------------------------------------------------------ expressions */
 
+// the reference as text for messages; an element access is "name[...]"
 static void varText(AstVarRef *v, char *buf, size_t n) {
-  snprintf(buf, n, "%s", v->name);
+  snprintf(buf, n, v->index ? "%s[...]" : "%s", v->name);
   for (int i = 0; i < v->numFields; i++) {
     size_t len = strlen(buf);
     snprintf(buf + len, n - len, ".%s", v->fields[i]);
   }
 }
 
-static Type *checkVarRef(AstVarRef *v) {
-  VarEntry *e = lookupVar(st, cur, v->name);
-  if (!e) {
-    for (int i = 0; i < numUndeclared; i++)
-      if (strcmp(undeclared[i], v->name) == 0)
-        return st->errorType;
-    if (numUndeclared == capUndeclared) {
-      capUndeclared = capUndeclared ? capUndeclared * 2 : 8;
-      undeclared = realloc(undeclared, AST_NAME_LEN * capUndeclared);
-    }
-    strcpy(undeclared[numUndeclared++], v->name);
-    semError(v->line, "variable %s is not declared", v->name);
+static Type *checkExpr(Expr *e);
+
+// The index of an element access must be an int. An index nested too deeply
+// is not checked here: the statement reports it (A.10) and the access is
+// treated as erroneous.
+static int checkIndex(AstVarRef *v) {
+  if (v->index->depth > MAX_EXPR_DEPTH)
+    return 0;
+  Type *t = checkExpr(v->index);
+  if (t->kind == TY_ERROR)
+    return 0;
+  if (t->kind != TY_INT) {
+    semError(v->line, "array index must be an int expression, not %s",
+             t->name);
+    return 0;
+  }
+  return 1;
+}
+
+// one report per undeclared name and function
+static Type *reportUndeclared(AstVarRef *v) {
+  for (int i = 0; i < numUndeclared; i++)
+    if (strcmp(undeclared[i], v->name) == 0)
+      return st->errorType;
+  if (numUndeclared == capUndeclared) {
+    capUndeclared = capUndeclared ? capUndeclared * 2 : 8;
+    undeclared = realloc(undeclared, AST_NAME_LEN * capUndeclared);
+  }
+  strcpy(undeclared[numUndeclared++], v->name);
+  semError(v->line, "variable %s is not declared", v->name);
+  return st->errorType;
+}
+
+// b2[i]: the variable must be an array; the access has its element type.
+// After any error (reported here or before) the access has the error type,
+// so nothing else is reported for it; the index is checked in every case.
+static Type *checkElement(AstVarRef *v, VarEntry *e) {
+  int indexOk = checkIndex(v);
+  if (!e)
+    return reportUndeclared(v);
+  v->entry = e;
+  if (e->type->kind == TY_ERROR)
+    return st->errorType;
+  if (e->type->kind != TY_ARRAY) {
+    semError(v->line, "%s is not an array (it has type %s)", v->name,
+             e->type->name);
     return st->errorType;
   }
+  if (!indexOk)
+    return st->errorType;
+  v->type = e->type->elem;
+  v->offset = 0;
+  return v->type;
+}
+
+static Type *checkVarRef(AstVarRef *v) {
+  VarEntry *e = lookupVar(st, cur, v->name);
+  if (v->index)
+    return checkElement(v, e);
+  if (!e)
+    return reportUndeclared(v);
   v->entry = e;
   Type *t = e->type;
   int offset = 0;
@@ -507,17 +593,27 @@ static Type *recordScalar(Expr *e, Type *rec, Type *scalar) {
   return rec;
 }
 
+// A whole array is never a value: it may only be indexed. Reports a bare
+// array and turns its type into the error type, so nothing else is reported.
+static Type *noBareArray(AstVarRef *v, Type *t, int line) {
+  if (t->kind != TY_ARRAY)
+    return t;
+  semError(line, "array %s cannot be used without an index", v->name);
+  return st->errorType;
+}
+
 static Type *checkExpr(Expr *e) {
   Type *t = st->errorType;
   switch (e->kind) {
   case EXPR_NUM:
-    t = checkIntLiteral(e) ? st->intType : st->errorType;
+    // a character literal was decoded by the lexer; there is nothing to parse
+    t = e->isChar || checkIntLiteral(e) ? st->intType : st->errorType;
     break;
   case EXPR_RNUM:
     t = st->realType;
     break;
   case EXPR_VAR: {
-    t = checkVarRef(&e->var);
+    t = noBareArray(&e->var, checkVarRef(&e->var), e->line);
     if (t->kind == TY_UNION) {
       char buf[256];
       varText(&e->var, buf, sizeof(buf));
@@ -574,11 +670,38 @@ static Type *checkExpr(Expr *e) {
   return t;
 }
 
-static void checkBool(BoolExpr *b) {
+// Every expression of a statement that is not part of a bigger expression
+// is a root: the right-hand side of an assignment, an index of a target or of
+// a read/write/readchar argument, a relational operand, a print item, and
+// the argument of writechar and exit. A root nested too deeply gets one
+// message and the error type, and is not checked any further.
+static void reportTooDeep(int line) {
+  semError(line, "expression is too long or too deeply nested (more than %d "
+                 "operators deep)",
+           MAX_EXPR_DEPTH);
+}
+
+static Type *checkRoot(Expr *e, int line) {
+  if (e->depth > MAX_EXPR_DEPTH) {
+    reportTooDeep(line);
+    e->type = st->errorType;
+    return e->type;
+  }
+  return checkExpr(e);
+}
+
+// the index of a target is a root of its own (the target itself is checked
+// by checkVarRef, which skips an index that is too deep)
+static void checkTargetIndex(AstVarRef *v, int line) {
+  if (v->index && v->index->depth > MAX_EXPR_DEPTH)
+    reportTooDeep(line);
+}
+
+static void checkBool(BoolExpr *b, int line) {
   switch (b->kind) {
   case BOOL_REL: {
-    Type *l = checkExpr(b->lhs);
-    Type *r = checkExpr(b->rhs);
+    Type *l = checkRoot(b->lhs, line);
+    Type *r = checkRoot(b->rhs, line);
     if (l->kind == TY_ERROR || r->kind == TY_ERROR)
       return;
     if (!isScalar(l) || !isScalar(r))
@@ -589,11 +712,11 @@ static void checkBool(BoolExpr *b) {
     break;
   }
   case BOOL_NOT:
-    checkBool(b->left);
+    checkBool(b->left, line);
     break;
   default:
-    checkBool(b->left);
-    checkBool(b->right);
+    checkBool(b->left, line);
+    checkBool(b->right, line);
   }
 }
 
@@ -623,23 +746,28 @@ static VarEntry *checkId(AstId *id) {
   return v.entry;
 }
 
+// a variable in a call's parameter list or in a return list; arrays are
+// never copied in or out (the position is then not type checked)
+static VarEntry *checkPassedId(AstId *id, int line) {
+  VarEntry *v = checkId(id);
+  if (v && v->type->kind == TY_ARRAY)
+    semError(line, "array %s cannot be passed to or returned from a function",
+             v->name);
+  return v;
+}
+
 static void checkCall(Stmt *s) {
+  // any function may be called, itself and later ones included (the
+  // signatures of all functions are known before bodies are checked)
   FuncEntry *callee = findFunc(st, s->funName);
   if (!callee)
     semError(s->line, "function %s is not defined", s->funName);
-  else if (callee == cur || strcmp(callee->name, cur->name) == 0)
-    semError(s->line, "function %s cannot call itself (recursion is not "
-                      "allowed)",
-             s->funName);
-  else if (callee->index > cur->index)
-    semError(s->line, "function %s is called before it is defined",
-             s->funName);
   s->callee = callee;
 
   for (int i = 0; i < s->ins.count; i++)
-    checkId(&s->ins.ids[i]);
+    checkPassedId(&s->ins.ids[i], s->line);
   for (int i = 0; i < s->outs.count; i++) {
-    VarEntry *v = checkId(&s->outs.ids[i]);
+    VarEntry *v = checkPassedId(&s->outs.ids[i], s->line);
     int earlier = 0;
     for (int j = 0; v && j < i; j++)
       earlier += s->outs.ids[j].entry == v;
@@ -658,6 +786,7 @@ static void checkCall(Stmt *s) {
     for (int i = 0; i < s->ins.count; i++) {
       VarEntry *actual = s->ins.ids[i].entry, *formal = callee->inputs[i];
       if (actual && formal && actual->type->kind != TY_ERROR &&
+          actual->type->kind != TY_ARRAY &&
           formal->type->kind != TY_ERROR && actual->type != formal->type)
         semError(s->line,
                  "input parameter %d of %s must have type %s, but %s has "
@@ -675,6 +804,7 @@ static void checkCall(Stmt *s) {
     for (int i = 0; i < s->outs.count; i++) {
       VarEntry *actual = s->outs.ids[i].entry, *formal = callee->outputs[i];
       if (actual && formal && actual->type->kind != TY_ERROR &&
+          actual->type->kind != TY_ARRAY &&
           formal->type->kind != TY_ERROR && actual->type != formal->type)
         semError(s->line,
                  "output parameter %d of %s has type %s, but %s has type %s",
@@ -692,12 +822,17 @@ static void collectAssigned(Stmt *s, AccessSet *set) {
       setAddRef(set, &s->lhs);
       break;
     case STMT_READ:
+    case STMT_READCHAR:
       if (s->ioArg->kind == EXPR_VAR)
         setAddRef(set, &s->ioArg->var);
       break;
     case STMT_CALL:
       for (int i = 0; i < s->outs.count; i++)
         setAddWhole(set, s->outs.ids[i].entry);
+      // the callee may change any global (there is no interprocedural
+      // analysis), so a loop may wait for a global that a callee updates
+      for (VarEntry *g = st->globals; g; g = g->next)
+        setAddWhole(set, g);
       break;
     case STMT_WHILE:
     case STMT_IF:
@@ -705,32 +840,63 @@ static void collectAssigned(Stmt *s, AccessSet *set) {
       collectAssigned(s->elseBody, set);
       break;
     case STMT_WRITE:
+    case STMT_WRITECHAR:
+    case STMT_PRINT:
+    case STMT_EXIT:
       break;
     }
   }
+}
+
+// variables an expression reads: an element access reads the whole array
+// and everything its index reads
+static void collectExprVars(Expr *e, AccessSet *set) {
+  if (!e)
+    return;
+  if (e->kind == EXPR_VAR) {
+    setAddRef(set, &e->var);
+    collectExprVars(e->var.index, set);
+    return;
+  }
+  collectExprVars(e->left, set);
+  collectExprVars(e->right, set);
 }
 
 static void collectCondVars(BoolExpr *b, AccessSet *set) {
   if (!b)
     return;
   if (b->kind == BOOL_REL) {
-    if (b->lhs->kind == EXPR_VAR)
-      setAddRef(set, &b->lhs->var);
-    if (b->rhs->kind == EXPR_VAR)
-      setAddRef(set, &b->rhs->var);
+    collectExprVars(b->lhs, set);
+    collectExprVars(b->rhs, set);
     return;
   }
   collectCondVars(b->left, set);
   collectCondVars(b->right, set);
 }
 
-static int condHasUndeclared(BoolExpr *b) {
+static int exprHasUnresolved(Expr *e) {
+  if (!e)
+    return 0;
+  if (e->kind == EXPR_VAR)
+    return !e->var.type || exprHasUnresolved(e->var.index);
+  return exprHasUnresolved(e->left) || exprHasUnresolved(e->right);
+}
+
+static int isErrorTyped(Expr *e) {
+  return !e->type || e->type->kind == TY_ERROR;
+}
+
+// true if the while rule cannot be judged because the condition already has
+// an error: a variable (also inside an index) that did not resolve, or an
+// operand of the error type (a bare array, an index on a non-array, an
+// operand nested too deeply, ...)
+static int condHasError(BoolExpr *b) {
   if (!b)
     return 0;
   if (b->kind == BOOL_REL)
-    return (b->lhs->kind == EXPR_VAR && !b->lhs->var.type) ||
-           (b->rhs->kind == EXPR_VAR && !b->rhs->var.type);
-  return condHasUndeclared(b->left) || condHasUndeclared(b->right);
+    return exprHasUnresolved(b->lhs) || exprHasUnresolved(b->rhs) ||
+           isErrorTyped(b->lhs) || isErrorTyped(b->rhs);
+  return condHasError(b->left) || condHasError(b->right);
 }
 
 static void checkStmts(Stmt *s);
@@ -739,14 +905,9 @@ static void checkStmt(Stmt *s) {
   char buf[256];
   switch (s->kind) {
   case STMT_ASSIGN: {
-    Type *lt = checkVarRef(&s->lhs);
-    Type *rt = st->errorType;
-    if (s->rhs->depth > MAX_EXPR_DEPTH)
-      semError(s->line, "expression is too long or too deeply nested (more "
-                        "than %d operators deep)",
-               MAX_EXPR_DEPTH);
-    else
-      rt = checkExpr(s->rhs);
+    checkTargetIndex(&s->lhs, s->line);
+    Type *lt = noBareArray(&s->lhs, checkVarRef(&s->lhs), s->line);
+    Type *rt = checkRoot(s->rhs, s->line);
     varText(&s->lhs, buf, sizeof(buf));
     if (lt->kind == TY_UNION) {
       semError(s->line, "cannot assign to union %s; assign one of its fields",
@@ -769,7 +930,9 @@ static void checkStmt(Stmt *s) {
         checkExpr(s->ioArg);
       break;
     }
-    Type *t = checkVarRef(&s->ioArg->var);
+    checkTargetIndex(&s->ioArg->var, s->line);
+    Type *t = noBareArray(&s->ioArg->var, checkVarRef(&s->ioArg->var),
+                          s->line);
     s->ioArg->type = t;
     if (!isIOType(t)) {
       varText(&s->ioArg->var, buf, sizeof(buf));
@@ -778,22 +941,52 @@ static void checkStmt(Stmt *s) {
     }
     break;
   }
+  case STMT_READCHAR: {
+    AstVarRef *v = &s->ioArg->var;
+    checkTargetIndex(v, s->line);
+    Type *t = noBareArray(v, checkVarRef(v), s->line);
+    s->ioArg->type = t;
+    if (t->kind != TY_ERROR && t->kind != TY_INT) {
+      varText(v, buf, sizeof(buf));
+      semError(s->line, "readchar needs an int variable, not %s of type %s",
+               buf, t->name);
+    }
+    break;
+  }
+  case STMT_WRITECHAR:
+  case STMT_EXIT: {
+    Type *t = checkRoot(s->ioArg, s->line);
+    if (t->kind != TY_ERROR && t->kind != TY_INT)
+      semError(s->line, "%s needs an int value, not %s",
+               s->kind == STMT_EXIT ? "exit" : "writechar", t->name);
+    break;
+  }
+  case STMT_PRINT:
+    for (PrintItem *it = s->items; it; it = it->next) {
+      if (it->isString)
+        continue;
+      Type *t = checkRoot(it->expr, s->line);
+      if (t->kind != TY_ERROR && !isScalar(t))
+        semError(s->line, "print needs int or real values, not %s", t->name);
+    }
+    break;
   case STMT_CALL:
     checkCall(s);
     break;
   case STMT_IF:
-    checkBool(s->cond);
+    checkBool(s->cond, s->line);
     checkStmts(s->body);
     checkStmts(s->elseBody);
     break;
   case STMT_WHILE: {
-    checkBool(s->cond);
+    checkBool(s->cond, s->line);
     checkStmts(s->body);
     // The loop can only terminate if the body changes something the
     // condition reads: the same variable, and for a record field an
-    // overlapping part of it (writing d2.x does not update d2.y). Skipped
-    // when an operand failed to resolve (already reported).
-    if (!condHasUndeclared(s->cond)) {
+    // overlapping part of it (writing d2.x does not update d2.y); an array
+    // counts as one variable, and a call changes every global. Skipped when
+    // the condition already has an error (reported).
+    if (!condHasError(s->cond)) {
       AccessSet condVars = {0}, changed = {0};
       collectCondVars(s->cond, &condVars);
       collectAssigned(s->body, &changed);
@@ -820,7 +1013,7 @@ static void checkStmts(Stmt *s) {
 static void checkReturn(FuncEntry *fe) {
   Function *f = fe->ast;
   for (int i = 0; i < f->returns.count; i++)
-    checkId(&f->returns.ids[i]);
+    checkPassedId(&f->returns.ids[i], f->returnLine);
 
   if (fe->isMain) {
     if (f->returns.count > 0)
@@ -839,7 +1032,7 @@ static void checkReturn(FuncEntry *fe) {
   collectAssigned(f->stmts, &assigned);
   for (int i = 0; i < f->returns.count; i++) {
     VarEntry *v = f->returns.ids[i].entry, *formal = fe->outputs[i];
-    if (!v)
+    if (!v || v->type->kind == TY_ARRAY) // an array was already reported
       continue;
     if (formal && v->type->kind != TY_ERROR &&
         formal->type->kind != TY_ERROR && v->type != formal->type)
@@ -859,7 +1052,9 @@ static void checkReturn(FuncEntry *fe) {
 /* ------------------------------------------------------------ stack use */
 
 // Bytes a statement list may push temporarily: record assignments stage
-// every field on the stack, and expressions keep one slot per level.
+// every field on the stack, and expressions keep one slot per level. The two
+// spare slots cover what an element store or a relational test keeps on top
+// of an expression, and readchar's 16 bytes for an element's address.
 static long long tempStack(Stmt *s) {
   long long most = 8LL * (MAX_EXPR_DEPTH + 2);
   for (; s; s = s->next) {
@@ -875,52 +1070,164 @@ static long long tempStack(Stmt *s) {
   return most;
 }
 
-// Largest parameter block plus callee stack use over the calls in s.
-static long long callStack(Stmt *s, long long *use, int *calleeTooBig) {
-  long long most = 0;
+// Stack use is checked over the call graph (edge f -> g for every call of g
+// in f). Its strongly connected components separate recursive functions
+// from the others:
+//   need(f)   = 16 + locals + max(temporaries, largest parameter block f
+//               reserves for a callee): one activation of f by itself
+//   use(f)    = 16 + locals + max(temporaries, paramSize(g) + use(g) over the
+//               callees g): the deepest chain below a non-recursive f
+//   single(f) = the same for a function that is in or above a cycle, where
+//               a callee g that is also unbounded counts only paramSize(g)
+// use and single are limited to MAX_STACK_USE; the generated code checks
+// the actual depth at every function entry against need (codegen.c).
+
+typedef struct {
+  FuncEntry **items;
+  int n, cap;
+} FuncList;
+
+// resolved callees of the call statements in s
+static void collectCallees(Stmt *s, FuncList *l) {
   for (; s; s = s->next) {
-    if (s->kind == STMT_CALL && s->callee && s->callee->index < cur->index) {
-      long long need = s->callee->paramSize + use[s->callee->index];
-      if (need > most)
-        most = need;
-      if (use[s->callee->index] > MAX_STACK_USE)
-        *calleeTooBig = 1;
+    if (s->kind == STMT_CALL && s->callee) {
+      if (l->n == l->cap) {
+        l->cap = l->cap ? l->cap * 2 : 8;
+        l->items = realloc(l->items, sizeof(FuncEntry *) * l->cap);
+      }
+      l->items[l->n++] = s->callee;
     }
-    long long inner = callStack(s->body, use, calleeTooBig);
-    long long other = callStack(s->elseBody, use, calleeTooBig);
-    if (inner > most)
-      most = inner;
-    if (other > most)
-      most = other;
+    collectCallees(s->body, l);
+    collectCallees(s->elseBody, l);
   }
-  return most;
 }
 
-// Recursion is not allowed and callees come earlier in the file, so the
-// deepest stack use of each function can be computed in source order:
-// return address + saved rbp + locals + the larger of its temporaries and
-// (parameter block + stack use) of any function it calls.
-static void checkStackUse(void) {
-  long long *use = calloc(st->numFuncs, sizeof(long long));
-  for (int i = 0; i < st->numFuncs; i++) {
-    cur = st->funcs[i];
-    long long temp = tempStack(cur->ast->stmts);
-    long long returned = 0;
-    for (int k = 0; k < cur->numOutputs; k++)
-      if (cur->outputs[k])
-        returned += cur->outputs[k]->type->size;
-    if (returned > temp)
-      temp = returned;
-    int calleeTooBig = 0;
-    long long calls = callStack(cur->ast->stmts, use, &calleeTooBig);
-    use[i] = 16 + cur->localSize + (calls > temp ? calls : temp);
-    if (use[i] > MAX_STACK_USE && !calleeTooBig)
-      semError(cur->line,
-               "%s needs about %lld bytes of stack, counting the functions "
-               "it calls; the limit is %d",
-               cur->name, use[i], MAX_STACK_USE);
+typedef struct {
+  FuncList callees;
+  long long temp; // temporaries, or the returned outputs if they need more
+  int visit, low, onStack; // Tarjan's bookkeeping (visit < 0: not yet)
+  int recursive, unbounded;
+  long long use; // bounded functions only
+} StackInfo;
+
+static StackInfo *info;
+static int *tarjanStack, tarjanTop, visitCount;
+static int *order, numOrdered; // functions, callees' components first
+
+// Tarjan's algorithm; the recursion is as deep as the longest call chain,
+// so at most the number of functions.
+static void strongConnect(int v) {
+  info[v].visit = info[v].low = visitCount++;
+  tarjanStack[tarjanTop++] = v;
+  info[v].onStack = 1;
+  for (int i = 0; i < info[v].callees.n; i++) {
+    int w = info[v].callees.items[i]->index;
+    if (w == v)
+      info[v].recursive = 1; // calls itself
+    if (info[w].visit < 0) {
+      strongConnect(w);
+      if (info[w].low < info[v].low)
+        info[v].low = info[w].low;
+    } else if (info[w].onStack && info[w].visit < info[v].low) {
+      info[v].low = info[w].visit;
+    }
   }
-  free(use);
+  if (info[v].low != info[v].visit)
+    return;
+  int first = numOrdered, w;
+  do {
+    w = tarjanStack[--tarjanTop];
+    info[w].onStack = 0;
+    order[numOrdered++] = w;
+  } while (w != v);
+  if (numOrdered - first > 1) // a cycle through several functions
+    for (int k = first; k < numOrdered; k++)
+      info[order[k]].recursive = 1;
+}
+
+static void checkStackUse(void) {
+  int n = st->numFuncs;
+  info = calloc(n > 0 ? n : 1, sizeof(StackInfo));
+  tarjanStack = calloc(n > 0 ? n : 1, sizeof(int));
+  order = calloc(n > 0 ? n : 1, sizeof(int));
+  tarjanTop = visitCount = numOrdered = 0;
+
+  for (int i = 0; i < n; i++) {
+    FuncEntry *f = st->funcs[i];
+    collectCallees(f->ast->stmts, &info[i].callees);
+    info[i].visit = -1;
+    long long temp = tempStack(f->ast->stmts), returned = 0;
+    for (int k = 0; k < f->numOutputs; k++)
+      if (f->outputs[k])
+        returned += f->outputs[k]->type->size;
+    info[i].temp = returned > temp ? returned : temp;
+    long long block = 0;
+    for (int k = 0; k < info[i].callees.n; k++)
+      if (info[i].callees.items[k]->paramSize > block)
+        block = info[i].callees.items[k]->paramSize;
+    long long need = 16 + f->localSize + (block > info[i].temp ? block
+                                                              : info[i].temp);
+    f->stackNeed = need > MAX_STACK_USE ? MAX_STACK_USE : (int)need;
+  }
+  for (int i = 0; i < n; i++)
+    if (info[i].visit < 0)
+      strongConnect(i);
+
+  // Callees come first in `order` (or share the component), so whether a
+  // function is unbounded, and use() of every bounded callee, is known when
+  // a function is reached.
+  for (int k = 0; k < n; k++) {
+    StackInfo *f = &info[order[k]];
+    f->unbounded = f->recursive;
+    for (int i = 0; i < f->callees.n; i++)
+      if (info[f->callees.items[i]->index].unbounded)
+        f->unbounded = 1;
+  }
+  for (int pass = 0; pass < 2; pass++) // bounded functions, then the others
+    for (int k = 0; k < n; k++) {
+      StackInfo *f = &info[order[k]];
+      FuncEntry *fe = st->funcs[order[k]];
+      if (f->unbounded != pass)
+        continue;
+      long long calls = 0;
+      int calleeTooBig = 0;
+      for (int i = 0; i < f->callees.n; i++) {
+        FuncEntry *g = f->callees.items[i];
+        long long below = g->paramSize;
+        if (!info[g->index].unbounded) {
+          below += info[g->index].use;
+          if (info[g->index].use > MAX_STACK_USE)
+            calleeTooBig = 1;
+        }
+        if (below > calls)
+          calls = below;
+      }
+      long long use =
+          16 + fe->localSize + (calls > f->temp ? calls : f->temp);
+      if (!f->unbounded) {
+        f->use = use;
+        if (use > MAX_STACK_USE && !calleeTooBig)
+          semError(fe->line,
+                   "%s needs about %lld bytes of stack, counting the "
+                   "functions it calls; the limit is %d",
+                   fe->name, use, MAX_STACK_USE);
+      } else if (use > MAX_STACK_USE) {
+        // reported even when a bounded callee is too big itself: that
+        // callee has its own message, this is about one activation of fe
+        semError(fe->line,
+                 "%s needs about %lld bytes of stack for a single call; the "
+                 "limit is %d",
+                 fe->name, use, MAX_STACK_USE);
+      }
+    }
+
+  for (int i = 0; i < n; i++)
+    free(info[i].callees.items);
+  free(info);
+  free(tarjanStack);
+  free(order);
+  info = NULL;
+  tarjanStack = order = NULL;
 }
 
 /* ------------------------------------------------------------ entry point */

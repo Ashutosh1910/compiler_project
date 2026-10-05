@@ -438,6 +438,7 @@ TreeNode *newTreeNode(Symbol sym) {
   n->sym = sym;
   n->ruleIndex = -1;
   n->lineNo = -1;
+  n->literal = -1;
   n->lexeme[0] = '\0';
   return n;
 }
@@ -594,6 +595,7 @@ TreeNode *parseTokens(TokenList *tokens, Grammar *g, ParseTable *pt,
           top.node->lineNo = curLine(tokens, tokenIdx);
           strncpy(top.node->lexeme, curLexeme(tokens, tokenIdx), 30);
           top.node->lexeme[30] = '\0';
+          top.node->literal = tokens->buf[tokenIdx].literal;
         }
         tokenIdx++;
         skipComments(tokens, &tokenIdx);
@@ -695,6 +697,7 @@ void printNodeRow(Grammar *g, TreeNode *node, const char *parentSymbol,
   const char *valueIfNumber = "----";
   const char *nodeSymbol = "----";
   char valueBuf[32];
+  char shown[4 * sizeof(node->lexeme)];
 
   if (isLeaf) {
     if (node->sym.kind == SYM_TERMINAL && node->sym.id == (int)TK_EPS) {
@@ -703,6 +706,10 @@ void printNodeRow(Grammar *g, TreeNode *node, const char *parentSymbol,
     } else if (node->lexeme[0] && strcmp(node->lexeme, "----") != 0) {
       lexeme = node->lexeme;
       tokenName = tokenTypeToString((TokenType)node->sym.id);
+      if (node->sym.id == (int)TK_STR || node->sym.id == (int)TK_CHARLIT) {
+        showSpaces(shown, node->lexeme); // keep the columns space-free
+        lexeme = shown;
+      }
     } else {
       lexeme = "----";
       tokenName = tokenTypeToString((TokenType)node->sym.id);

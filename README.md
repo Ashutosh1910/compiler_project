@@ -23,6 +23,19 @@ Non-interactive flags (exit status 0 = ok, 1 = errors in the source):
 
 Running generated programs needs x86-64 Linux with `nasm` and `gcc`.
 
+## Language extensions
+
+Beyond the course language (see `docs/EXTENSIONS_SPEC.md`): the statements
+`readchar(b2);` (next input byte, -1 at end of input), `writechar(<expr>);`
+(one byte), `print("text", <expr>, ...);` (strings, ints and reals without a
+newline) and `exit(<expr>);`; character literals such as `'a'` and `'\n'`
+(int constants) and string literals (only as `print` items); one-dimensional
+`int`/`real` arrays (`type int[100] : c2;`, locals or globals, elements
+`c2[<expr>]` checked against their bounds at run time); recursion and calls
+to functions defined later, with a runtime stack guard; and a call statement
+in a loop body counts as an update of every global. `toy/` holds a small
+compiler written in the extended language (Part B of the specification).
+
 ## Tests
 
     make test                         # or: python3 tests/run_tests.py

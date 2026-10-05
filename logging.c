@@ -4,6 +4,7 @@
 //Aarya Jain - 2023A7PS0618P
 //Devansh Agarwal - 2023A7PS0570P
 #include "lexerDef.h"
+#include <string.h>
 const char *tokenTypeToString(TokenType type) {
   switch (type) {
   case TK_ASSIGNOP:
@@ -120,6 +121,18 @@ const char *tokenTypeToString(TokenType type) {
     return "TK_GE";
   case TK_NE:
     return "TK_NE";
+  case TK_READCHAR:
+    return "TK_READCHAR";
+  case TK_WRITECHAR:
+    return "TK_WRITECHAR";
+  case TK_PRINT:
+    return "TK_PRINT";
+  case TK_EXIT:
+    return "TK_EXIT";
+  case TK_CHARLIT:
+    return "TK_CHARLIT";
+  case TK_STR:
+    return "TK_STR";
   case TK_EPS:
     return "TK_EPS";
   case TK_DOLLAR:
@@ -235,6 +248,15 @@ const char *tokenTypeToLexeme(Token* t) {
     return ">=";
   case TK_NE:
     return "!=";
+  // keywords may appear as field names, so the parse tree needs their text
+  case TK_READCHAR:
+    return "readchar";
+  case TK_WRITECHAR:
+    return "writechar";
+  case TK_PRINT:
+    return "print";
+  case TK_EXIT:
+    return "exit";
   case TK_DOLLAR:
     return "$";
   default:
@@ -250,7 +272,28 @@ void printTokenHeader() {
          "----------\n");
 }
 
+// Literal lexemes may contain spaces; every listing that is split into
+// columns on whitespace shows a space as \x20 instead. dst must hold
+// 4 * strlen(src) + 1 bytes.
+void showSpaces(char *dst, const char *src) {
+  for (; *src; src++) {
+    if (*src == ' ') {
+      memcpy(dst, "\\x20", 4);
+      dst += 4;
+    } else {
+      *dst++ = *src;
+    }
+  }
+  *dst = '\0';
+}
+
 void printToken(Token t) {
+  char shown[4 * sizeof(t.lexeme)];
+  const char *lexeme = t.lexemeSize > 0 ? t.lexeme : "-";
+  if (t.type == TK_STR || t.type == TK_CHARLIT) {
+    showSpaces(shown, t.lexeme);
+    lexeme = shown;
+  }
   printf("| %-6u | %-18s | %-25s |\n", t.lineNo, tokenTypeToString(t.type),
-         t.lexemeSize > 0 ? t.lexeme : "-");
+         lexeme);
 }

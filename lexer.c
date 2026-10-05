@@ -13,10 +13,61 @@
 // fits the 30 characters of Token.lexeme
 #define MAX_NUMBER_DIGITS 23
 #define HASH_SIZE 53
+// decoded bytes of one string literal
+#define MAX_STRING_LEN 255
 
 Token newToken(TokenType type, State *s) {
-  Token t = {.type = type, .lexeme = {0}, .lexemeSize = 0, .lineNo = s->line};
+  Token t = {.type = type,
+             .lexeme = {0},
+             .lexemeSize = 0,
+             .lineNo = s->line,
+             .literal = -1};
   return t;
+}
+
+/* --------------------------------------------------------- string table */
+
+// Decoded string literals. A token's lexeme holds only 30 bytes, so a
+// TK_STR token carries an index into this table instead; the AST copies the
+// bytes it needs, so the table only has to live until the next
+// initializeState().
+typedef struct {
+  char *bytes; // NUL-terminated; a literal never contains NUL
+  int len;
+} StringLiteral;
+
+static StringLiteral *strings;
+static int numStrings, capStrings;
+
+static void clearStringLiterals(void) {
+  for (int i = 0; i < numStrings; i++)
+    free(strings[i].bytes);
+  free(strings);
+  strings = NULL;
+  numStrings = capStrings = 0;
+}
+
+int addStringLiteral(const char *bytes, int len) {
+  if (numStrings == capStrings) {
+    capStrings = capStrings ? capStrings * 2 : 16;
+    strings = realloc(strings, sizeof(StringLiteral) * capStrings);
+  }
+  char *copy = malloc(len + 1);
+  memcpy(copy, bytes, len);
+  copy[len] = '\0';
+  strings[numStrings] = (StringLiteral){copy, len};
+  return numStrings++;
+}
+
+const char *stringLiteralText(int index, int *len) {
+  if (index < 0 || index >= numStrings) {
+    if (len)
+      *len = 0;
+    return "";
+  }
+  if (len)
+    *len = strings[index].len;
+  return strings[index].bytes;
 }
 
 TokenList newTokenList(int initialCapacity) {
@@ -104,6 +155,10 @@ Hashmap initializeKeywordMap() {
   insertInHashmap(&keywordMap, "record", TK_RECORD);
   insertInHashmap(&keywordMap, "endrecord", TK_ENDRECORD);
   insertInHashmap(&keywordMap, "else", TK_ELSE);
+  insertInHashmap(&keywordMap, "readchar", TK_READCHAR);
+  insertInHashmap(&keywordMap, "writechar", TK_WRITECHAR);
+  insertInHashmap(&keywordMap, "print", TK_PRINT);
+  insertInHashmap(&keywordMap, "exit", TK_EXIT);
   return keywordMap;
 }
 
@@ -122,6 +177,7 @@ TokenType lookupKeyword(Hashmap *h, const char *key) {
 
 State initializeState(const char *fileName,int logging) {
 
+  clearStringLiterals();
   FILE *file = fopen(fileName, "r");
   if (!file)
     printError("File not found");
@@ -149,6 +205,165 @@ void appendToTokenList(Token c, State* s) {
     s->tokenList.size++;
   }
   if (s->logging) printToken(c);
+}
+
+/* -------------------------------------------------------------- literals */
+
+static int isPrintable(int c) { return c >= 0x20 && c <= 0x7E; }
+
+// A literal never spans lines; CR counts as a line end too, so that an
+// unterminated literal on a CRLF line gives one error.
+static int isLineEnd(int c) { return c == '\n' || c == '\r' || c == EOF; }
+
+// value of the byte after a backslash, or -1 if it is no valid escape
+static int escapeValue(int c, int inString) {
+  switch (c) {
+  case 'n': return '\n';
+  case 't': return '\t';
+  case 'r': return '\r';
+  case '\\': return '\\';
+  case '\'': return '\'';
+  case '"': return '"';
+  case '0': return inString ? -1 : 0; // strings are printed with %s
+  default: return -1;
+  }
+}
+
+// "\<X>" of an escape message: the byte if printable, else x and two hex digits
+static void escapeName(int c, char *buf, size_t n) {
+  if (isPrintable(c))
+    snprintf(buf, n, "%c", c);
+  else
+    snprintf(buf, n, "x%02X", (unsigned char)c);
+}
+
+static void addSpelling(Token *t, int c) {
+  if (t->lexemeSize < sizeof(t->lexeme) - 1)
+    t->lexeme[t->lexemeSize++] = (char)c;
+}
+
+// After the opening ' : one character or escape, then the closing '. A byte
+// that ends the line (or EOF) is left in *cp for the main loop, so line
+// counting stays right; after any other error the rest of the literal is
+// skipped up to its closing quote.
+static void scanCharLiteral(State *s, int *cp) {
+  Token t = newToken(TK_CHARLIT, s);
+  char msg[80], name[8];
+  addSpelling(&t, '\'');
+  int c = fgetc(s->file);
+  if (isLineEnd(c))
+    goto unterminated;
+  if (c == '\'') {
+    printLexerError("empty character literal", s);
+    return;
+  }
+  if (c == '\\') {
+    addSpelling(&t, c);
+    c = fgetc(s->file);
+    if (isLineEnd(c))
+      goto unterminated;
+    if (escapeValue(c, 0) < 0) {
+      escapeName(c, name, sizeof(name));
+      snprintf(msg, sizeof(msg),
+               "unknown escape sequence \\%s in character literal", name);
+      printLexerError(msg, s);
+      goto skip;
+    }
+  } else if (!isPrintable(c)) {
+    snprintf(msg, sizeof(msg), "byte \\x%02X not allowed in character literal",
+             (unsigned char)c);
+    printLexerError(msg, s);
+    goto skip;
+  }
+  addSpelling(&t, c);
+  c = fgetc(s->file);
+  if (c == '\'') {
+    addSpelling(&t, c);
+    appendToTokenList(t, s);
+    return;
+  }
+  if (isLineEnd(c))
+    goto unterminated;
+  printLexerError("character literal must contain exactly one character", s);
+skip:
+  do
+    c = fgetc(s->file);
+  while (c != '\'' && !isLineEnd(c));
+  if (c == '\'')
+    return;
+  *cp = c;
+  s->scanNext = 0;
+  return;
+unterminated:
+  printLexerError("unterminated character literal", s);
+  *cp = c;
+  s->scanNext = 0;
+}
+
+// After the opening " : bytes and escapes up to the closing ". Every error is
+// reported (several per literal are possible) and suppresses the token.
+static void scanStringLiteral(State *s, int *cp) {
+  Token t = newToken(TK_STR, s);
+  char text[MAX_STRING_LEN];
+  char msg[80], name[8];
+  int len = 0, errors = 0, tooLong = 0;
+  addSpelling(&t, '"');
+  for (;;) {
+    int c = fgetc(s->file);
+    if (isLineEnd(c)) {
+      printLexerError("unterminated string literal", s);
+      *cp = c;
+      s->scanNext = 0;
+      return;
+    }
+    addSpelling(&t, c);
+    if (c == '"')
+      break;
+    int b = c;
+    if (c == '\\') {
+      c = fgetc(s->file);
+      if (isLineEnd(c)) {
+        printLexerError("unterminated string literal", s);
+        *cp = c;
+        s->scanNext = 0;
+        return;
+      }
+      addSpelling(&t, c);
+      b = escapeValue(c, 1);
+      if (b < 0) {
+        escapeName(c, name, sizeof(name));
+        snprintf(msg, sizeof(msg),
+                 "unknown escape sequence \\%s in string literal", name);
+        printLexerError(msg, s);
+        errors++;
+        continue;
+      }
+    } else if (!isPrintable(c)) {
+      snprintf(msg, sizeof(msg), "byte \\x%02X not allowed in string literal",
+               (unsigned char)c);
+      printLexerError(msg, s);
+      errors++;
+      continue;
+    }
+    if (len == MAX_STRING_LEN) {
+      if (!tooLong)
+        printLexerError("string literal longer than 255 characters", s);
+      tooLong = 1;
+      errors++;
+      continue;
+    }
+    text[len++] = (char)b;
+  }
+  if (errors)
+    return;
+  t.literal = addStringLiteral(text, len);
+  appendToTokenList(t, s);
+}
+
+int charLiteralValue(const char *lexeme) {
+  if (lexeme[1] == '\\')
+    return escapeValue((unsigned char)lexeme[2], 0);
+  return (unsigned char)lexeme[1];
 }
 
 TokenList scan(State *s) {
@@ -391,6 +606,13 @@ TokenList scan(State *s) {
       break;
     }
 
+    case '\'':
+      scanCharLiteral(s, &c);
+      break;
+    case '"':
+      scanStringLiteral(s, &c);
+      break;
+
     default:
       if (isNum(c)) {
         Token num = newToken(TK_NUM, s);
@@ -566,7 +788,7 @@ TokenList scan(State *s) {
         var.lexeme[var.lexemeSize] = '\0';
         appendToTokenList(var,s);
       } else {
-        char msg[32];
+        char msg[80];
         if (c > 32 && c < 127)
           snprintf(msg, sizeof(msg), "%c not recognized", c);
         else // NUL, control characters and non-ASCII bytes
@@ -589,12 +811,41 @@ void removeComments(const char *filename) {
   if (!state.file)
     return;
   int c = 0;
+  int pending = 0; // a byte read ahead that ended a literal
   while (c != EOF) {
-    c = fgetc(state.file);
+    if (pending) {
+      pending = 0;
+    } else {
+      c = fgetc(state.file);
+    }
     if (c == '%') {
       while (c != '\n' && c != EOF) {
         c = fgetc(state.file);
       }
+    } else if (c == '"' || c == '\'') {
+      // a % inside a string or character literal is not a comment: copy the
+      // literal verbatim up to its closing quote, or up to the line end
+      int quote = c;
+      putchar(c);
+      for (;;) {
+        c = fgetc(state.file);
+        if (isLineEnd(c)) {
+          pending = 1; // the line end is copied by the main loop
+          break;
+        }
+        putchar(c);
+        if (c == quote)
+          break;
+        if (c == '\\') {
+          c = fgetc(state.file);
+          if (isLineEnd(c)) {
+            pending = 1;
+            break;
+          }
+          putchar(c);
+        }
+      }
+      continue;
     }
     if (c != EOF)
       printf("%c", c);

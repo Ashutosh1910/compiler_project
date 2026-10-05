@@ -36,10 +36,12 @@ typedef struct {
 } AstTypeRef;
 
 // b5c6.s.ln.beginpoint.x  ->  name = "b5c6", fields = {s, ln, beginpoint, x}
+// c2[b3 + 1]               ->  name = "c2", index = b3 + 1 (never with fields)
 typedef struct {
   char name[AST_NAME_LEN];
   char (*fields)[AST_NAME_LEN];
   int numFields;
+  struct Expr *index; // element access: the index; NULL otherwise
   int line;
   // filled in by semantic analysis
   struct VarEntry *entry; // root variable
@@ -58,7 +60,9 @@ typedef struct Expr {
   AstVarRef var;           // EXPR_VAR
   TokenType op;            // EXPR_BINOP: TK_PLUS / TK_MINUS / TK_MUL / TK_DIV
   struct Expr *left, *right;
-  int depth;         // operators on the longest path to a leaf
+  int depth;         // operators on the longest path to a leaf (an index
+                     // level counts as one)
+  int isChar;        // EXPR_NUM written as a character literal ('a', '\n')
   struct Type *type; // filled in by semantic analysis
 } Expr;
 
@@ -89,8 +93,21 @@ typedef enum {
   STMT_IF,
   STMT_READ,
   STMT_WRITE,
-  STMT_CALL
+  STMT_CALL,
+  STMT_READCHAR,
+  STMT_WRITECHAR,
+  STMT_PRINT,
+  STMT_EXIT
 } StmtKind;
+
+// one item of print(...): a string literal or an arithmetic expression
+typedef struct PrintItem {
+  int isString;
+  char *text; // isString: decoded bytes, NUL-terminated (owned)
+  int len;
+  Expr *expr; // !isString
+  struct PrintItem *next;
+} PrintItem;
 
 typedef struct Stmt {
   StmtKind kind;
@@ -105,7 +122,10 @@ typedef struct Stmt {
   struct Stmt *elseBody;  // STMT_IF else-part (NULL if absent)
   int endLine;            // line of endwhile / endif
 
-  Expr *ioArg; // STMT_READ / STMT_WRITE (EXPR_VAR / EXPR_NUM / EXPR_RNUM)
+  // STMT_READ / STMT_WRITE: EXPR_VAR / EXPR_NUM / EXPR_RNUM;
+  // STMT_READCHAR: EXPR_VAR; STMT_WRITECHAR / STMT_EXIT: any expression
+  Expr *ioArg;
+  PrintItem *items; // STMT_PRINT
 
   char funName[AST_NAME_LEN]; // STMT_CALL
   IdList outs, ins;           // STMT_CALL
@@ -137,10 +157,12 @@ typedef struct AliasDef {
   struct AliasDef *next;
 } AliasDef;
 
-// "type <dataType> : name [: global];"  and function parameters
+// "type <dataType>[<N>] : name [: global];"  and function parameters
 typedef struct Decl {
   AstTypeRef type;
   char name[AST_NAME_LEN];
+  int isArray;                     // declared with a length (never parameters)
+  char lengthText[AST_NAME_LEN];   // the length as written (isArray only)
   int isGlobal;
   int line;
   struct Decl *next;

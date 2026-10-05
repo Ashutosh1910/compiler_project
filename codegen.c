@@ -23,6 +23,24 @@
 // zeroes the outputs, calls, then copies the outputs back (copy-in /
 // copy-out). Because frame and block sizes are multiples of 16, rsp is
 // 16-byte aligned at every call, as the System V ABI requires for printf.
+// Each activation has its own frame and block, so recursion needs nothing
+// more.
+//
+// Arrays are laid out like records: a local array occupies
+// [rbp - offset, rbp - offset + 8 * length), a global one is G_<name> in
+// .bss, and element i is at base + 8 * i. Every element access computes its
+// index into rax, checks 0 <= index < length (one unsigned compare) and
+// jumps to rt_index_error when it fails; then rcx holds the base.
+//
+// Stack guard: main stores the top of the stack in rt_stack_top, and every
+// other function checks on entry that the stack used so far plus its own
+// activation (FuncEntry.stackNeed, see semantic.c) stays within
+// MAX_STACK_USE; a deeper recursion stops at rt_stack_overflow instead of
+// crashing. The static check bounds every non-recursive chain by the same
+// amount, so the guard never fires for those.
+//
+// Runtime errors (division by zero, index out of bounds, stack overflow) and
+// all output go to stdout through C stdio, so they appear in program order.
 #include "codegen.h"
 #include <stdarg.h>
 #include <stdlib.h>
@@ -31,6 +49,7 @@
 static FILE *out;
 static FuncEntry *cur;
 static int labelCount;
+static int stringCount; // S<k> labels of print's string literals
 
 static int newLabel(void) { return labelCount++; }
 
@@ -66,6 +85,26 @@ static const char *addr(VarEntry *v, int off) {
 
 static const char *varAddr(AstVarRef *v, int extra) {
   return addr(v->entry, v->offset + extra);
+}
+
+static void genInt(Expr *e);
+
+// Element access: index -> rax, bounds check, base of the array -> rcx, so
+// the element is [rcx + rax*8]. Clobbers rax and rcx only (and whatever the
+// index expression uses).
+static void genElementAddress(AstVarRef *v) {
+  Type *array = v->entry->type;
+  int ok = newLabel();
+  genInt(v->index);
+  emit("cmp rax, %d", array->length);
+  emit("jb L%d", ok); // unsigned: a negative index looks huge and fails too
+  emit("mov rsi, rax");
+  emit("lea rdx, [rel AN_%s]", v->name);
+  emit("mov rcx, %d", array->length);
+  emit("mov r8, %d", v->line);
+  emit("jmp rt_index_error");
+  emitLabel(ok);
+  emit("lea rcx, %s", addr(v->entry, 0));
 }
 
 /* ---------------------------------------------------------------- records */
@@ -137,7 +176,6 @@ static Leaf *leavesOf(Type *t, int *n) {
 
 /* ------------------------------------------------------------ expressions */
 
-static void genInt(Expr *e);
 static void genReal(Expr *e);
 
 static void loadRealConst(double d, const char *text) {
@@ -188,9 +226,16 @@ static void genInt(Expr *e) {
     emit("mov rax, %lld", e->ival);
     break;
   case EXPR_VAR:
-    emit("mov rax, qword %s", varAddr(&e->var, 0));
+    if (e->var.index) {
+      genElementAddress(&e->var);
+      emit("mov rax, qword [rcx + rax*8]");
+    } else {
+      emit("mov rax, qword %s", varAddr(&e->var, 0));
+    }
     break;
   case EXPR_BINOP:
+    // the right operand may clobber rcx (an element access does), but
+    // leaves the stack as it found it
     genInt(e->left);
     emit("push rax");
     genInt(e->right);
@@ -226,7 +271,12 @@ static void genReal(Expr *e) {
     loadRealConst(e->rval, e->text);
     break;
   case EXPR_VAR:
-    emit("movsd xmm0, qword %s", varAddr(&e->var, 0));
+    if (e->var.index) {
+      genElementAddress(&e->var);
+      emit("movsd xmm0, qword [rcx + rax*8]");
+    } else {
+      emit("movsd xmm0, qword %s", varAddr(&e->var, 0));
+    }
     break;
   case EXPR_BINOP:
     genReal(e->left);
@@ -315,21 +365,24 @@ static void genCond(BoolExpr *b, int lTrue, int lFalse) {
     break;
   }
 
-  // operands are literals or variables, so evaluating one leaves the other
-  // register alone
+  // An operand may be an element access, whose index is any expression, so
+  // the right operand waits on the stack while the left one is evaluated.
   if (b->lhs->type->kind == TY_INT && b->rhs->type->kind == TY_INT) {
     static const char *jumps[] = {"jl", "jle", "je", "jg", "jge", "jne"};
     genInt(b->rhs);
-    emit("mov rcx, rax");
+    emit("push rax");
     genInt(b->lhs);
+    emit("pop rcx");
     emit("cmp rax, rcx");
     emit("%s L%d", jumps[b->relop - TK_LT], lTrue);
     emit("jmp L%d", lFalse);
     return;
   }
   genReal(b->rhs);
-  emit("movsd xmm1, xmm0");
+  pushXmm0();
   genReal(b->lhs);
+  emit("movsd xmm1, qword [rsp]");
+  emit("add rsp, 8");
   // ucomisd sets CF/ZF/PF; unordered (NaN) compares are false except for !=
   switch (b->relop) {
   case TK_LT:
@@ -367,7 +420,24 @@ static void genStmts(Stmt *s);
 
 static void genAssign(Stmt *s) {
   Type *t = s->lhs.type;
-  if (t->kind == TY_INT) {
+  if (s->lhs.index) {
+    // the value first, then the index (A.7.3), so the value waits on the
+    // stack while the index is computed and checked
+    if (t->kind == TY_INT) {
+      genInt(s->rhs);
+      emit("push rax");
+      genElementAddress(&s->lhs);
+      emit("pop rdx");
+      emit("mov qword [rcx + rax*8], rdx");
+    } else {
+      genReal(s->rhs);
+      pushXmm0();
+      genElementAddress(&s->lhs);
+      emit("movsd xmm0, qword [rsp]");
+      emit("add rsp, 8");
+      emit("movsd qword [rcx + rax*8], xmm0");
+    }
+  } else if (t->kind == TY_INT) {
     genInt(s->rhs);
     emit("mov qword %s, rax", varAddr(&s->lhs, 0));
   } else if (t->kind == TY_REAL) {
@@ -403,6 +473,15 @@ static void callPrintf(const char *fmt, int isReal) {
 
 static void genRead(Stmt *s) {
   AstVarRef *v = &s->ioArg->var;
+  if (v->index) { // checked before any input is consumed
+    genElementAddress(v);
+    emit("lea rsi, [rcx + rax*8]");
+    emit("lea rdi, [rel %s]",
+         v->type->kind == TY_INT ? "fmt_read_int" : "fmt_read_real");
+    emit("xor eax, eax");
+    emit("call scanf wrt ..plt");
+    return;
+  }
   int n;
   Leaf *leaves = leavesOf(v->type, &n);
   for (int i = 0; i < n; i++) {
@@ -427,6 +506,17 @@ static void genWrite(Stmt *s) {
     }
     return;
   }
+  if (e->var.index) { // one element: printed like a scalar variable
+    if (e->type->kind == TY_INT) {
+      genInt(e);
+      emit("mov rsi, rax");
+      callPrintf("fmt_int_nl", 0);
+    } else {
+      genReal(e);
+      callPrintf("fmt_real_nl", 1);
+    }
+    return;
+  }
   // a record prints its scalar leaves on one line, separated by spaces
   int n;
   Leaf *leaves = leavesOf(e->var.type, &n);
@@ -441,6 +531,52 @@ static void genWrite(Stmt *s) {
     }
   }
   free(leaves);
+}
+
+// readchar: getchar() gives a byte 0..255, or -1 (EOF) at the end of input
+static void genReadChar(Stmt *s) {
+  AstVarRef *v = &s->ioArg->var;
+  if (!v->index) {
+    emit("call getchar wrt ..plt");
+    emit("movsxd rax, eax");
+    emit("mov qword %s, rax", varAddr(v, 0));
+    return;
+  }
+  // the element is checked before any input is consumed; its address waits
+  // on the stack (with padding that keeps rsp aligned for the call)
+  genElementAddress(v);
+  emit("lea rax, [rcx + rax*8]");
+  emit("push rax");
+  emit("sub rsp, 8");
+  emit("call getchar wrt ..plt");
+  emit("add rsp, 8");
+  emit("pop rcx");
+  emit("movsxd rax, eax");
+  emit("mov qword [rcx], rax");
+}
+
+// print: every item is written before the next one is evaluated; strings
+// go through %s, so a % in them is printed as it is
+static void genPrint(Stmt *s) {
+  for (PrintItem *it = s->items; it; it = it->next) {
+    if (it->isString) {
+      // the bytes as numbers, so no character needs NASM quoting
+      int k = stringCount++;
+      fprintf(out, "section .data\nS%d: db ", k);
+      for (int i = 0; i < it->len; i++)
+        fprintf(out, "%d, ", (unsigned char)it->text[i]);
+      fprintf(out, "0\nsection .text\n");
+      emit("lea rsi, [rel S%d]", k);
+      callPrintf("fmt_str", 0);
+    } else if (it->expr->type->kind == TY_INT) {
+      genInt(it->expr);
+      emit("mov rsi, rax");
+      callPrintf("fmt_int", 0);
+    } else {
+      genReal(it->expr);
+      callPrintf("fmt_real", 1);
+    }
+  }
 }
 
 static void genCall(Stmt *s) {
@@ -470,8 +606,10 @@ static void genCall(Stmt *s) {
 }
 
 static void genStmt(Stmt *s) {
-  static const char *names[] = {"assignment", "while", "if",
-                                "read",       "write", "call"};
+  static const char *names[] = {"assignment", "while",     "if",
+                                "read",       "write",     "call",
+                                "readchar",   "writechar", "print",
+                                "exit"};
   fprintf(out, "    ; line %d: %s\n", s->line, names[s->kind]);
   switch (s->kind) {
   case STMT_ASSIGN:
@@ -485,6 +623,22 @@ static void genStmt(Stmt *s) {
     break;
   case STMT_CALL:
     genCall(s);
+    break;
+  case STMT_READCHAR:
+    genReadChar(s);
+    break;
+  case STMT_WRITECHAR: // the low 8 bits, as putchar takes them
+    genInt(s->ioArg);
+    emit("mov edi, eax");
+    emit("call putchar wrt ..plt");
+    break;
+  case STMT_PRINT:
+    genPrint(s);
+    break;
+  case STMT_EXIT: // exit() flushes stdout; the status is the low 8 bits
+    genInt(s->ioArg);
+    emit("mov edi, eax");
+    emit("call exit wrt ..plt");
     break;
   case STMT_WHILE: {
     int top = newLabel(), body = newLabel(), end = newLabel();
@@ -520,10 +674,19 @@ static void genStmts(Stmt *s) {
 static void genFunction(FuncEntry *f) {
   cur = f;
   fputc('\n', out);
-  if (f->isMain)
+  if (f->isMain) {
     fprintf(out, "main:\n");
-  else
+    emit("lea rax, [rsp + 8] ; the stack above main's return address");
+    emit("mov [rel rt_stack_top], rax");
+  } else {
+    // stack used by the callers down to this return address, plus this
+    // activation, must stay within MAX_STACK_USE
     fprintf(out, "F%s:\n", f->name);
+    emit("mov rax, [rel rt_stack_top]");
+    emit("sub rax, rsp");
+    emit("cmp rax, %d", MAX_STACK_USE + 8 - f->stackNeed);
+    emit("jg rt_stack_overflow");
+  }
   emit("push rbp");
   emit("mov rbp, rsp");
   if (f->localSize > 0) {
@@ -566,17 +729,43 @@ static void genFunction(FuncEntry *f) {
   emit("ret");
 }
 
+// AN_<name>: the name of every array variable, for index error messages;
+// one label per distinct name (a local array name may occur in several
+// functions)
+static void emitArrayName(VarEntry *v, const char ***done, int *n) {
+  if (v->type->kind != TY_ARRAY)
+    return;
+  for (int i = 0; i < *n; i++)
+    if (strcmp((*done)[i], v->name) == 0)
+      return;
+  *done = realloc(*done, sizeof(const char *) * (*n + 1));
+  (*done)[(*n)++] = v->name;
+  fprintf(out, "AN_%s: db \"%s\", 0\n", v->name, v->name);
+}
+
+static void emitArrayNames(SymbolTable *st) {
+  const char **done = NULL;
+  int n = 0;
+  for (VarEntry *g = st->globals; g; g = g->next)
+    emitArrayName(g, &done, &n);
+  for (int i = 0; i < st->numFuncs; i++)
+    for (VarEntry *v = st->funcs[i]->vars; v; v = v->next)
+      emitArrayName(v, &done, &n);
+  free(done);
+}
+
 void generateCode(Program *p, SymbolTable *st, FILE *o) {
   (void)p;
   out = o;
   labelCount = 0;
+  stringCount = 0;
 
   fprintf(out, "; generated by the Group 51 compiler\n");
   fprintf(out, "; build: nasm -f elf64 file.asm -o file.o && "
                "gcc -no-pie file.o -o program\n");
   fprintf(out, "default rel\n");
   fprintf(out, "global main\n");
-  fprintf(out, "extern printf, scanf, exit\n\n");
+  fprintf(out, "extern printf, scanf, exit, getchar, putchar\n\n");
 
   fprintf(out, "section .data\n");
   fprintf(out, "fmt_int_nl:    db \"%%lld\", 10, 0\n");
@@ -586,10 +775,20 @@ void generateCode(Program *p, SymbolTable *st, FILE *o) {
   fprintf(out, "fmt_read_int:  db \" %%lld\", 0\n");
   fprintf(out, "fmt_read_real: db \" %%lf\", 0\n");
   fprintf(out, "msg_div_zero:  db \"Runtime error: division by zero\", 10, "
-               "0\n\n");
+               "0\n");
+  fprintf(out, "fmt_int:       db \"%%lld\", 0\n");
+  fprintf(out, "fmt_real:      db \"%%.2f\", 0\n");
+  fprintf(out, "fmt_str:       db \"%%s\", 0\n");
+  fprintf(out, "msg_index:     db \"Runtime error: index %%lld out of bounds "
+               "for array %%s of length %%lld at line %%lld\", 10, 0\n");
+  fprintf(out, "msg_stack:     db \"Runtime error: stack overflow (recursion "
+               "too deep)\", 10, 0\n");
+  emitArrayNames(st);
+  fputc('\n', out);
 
   fprintf(out, "section .bss\n");
   fprintf(out, "    alignb 8\n");
+  fprintf(out, "rt_stack_top: resq 1\n");
   for (VarEntry *v = st->globals; v; v = v->next)
     fprintf(out, "G_%s: resb %d ; global %s\n", v->name, v->type->size,
             typeName(v->type));
@@ -601,6 +800,23 @@ void generateCode(Program *p, SymbolTable *st, FILE *o) {
   fprintf(out, "\nrt_div_by_zero:\n");
   emit("and rsp, -16 ; realign: we may be in the middle of an expression");
   emit("lea rdi, [rel msg_div_zero]");
+  emit("xor eax, eax");
+  emit("call printf wrt ..plt");
+  emit("mov edi, 1");
+  emit("call exit wrt ..plt");
+
+  // rsi = index, rdx = array name, rcx = length, r8 = line (printf's order)
+  fprintf(out, "\nrt_index_error:\n");
+  emit("and rsp, -16 ; realign: we may be in the middle of an expression");
+  emit("lea rdi, [rel msg_index]");
+  emit("xor eax, eax");
+  emit("call printf wrt ..plt");
+  emit("mov edi, 1");
+  emit("call exit wrt ..plt");
+
+  fprintf(out, "\nrt_stack_overflow:\n");
+  emit("and rsp, -16");
+  emit("lea rdi, [rel msg_stack]");
   emit("xor eax, eax");
   emit("call printf wrt ..plt");
   emit("mov edi, 1");

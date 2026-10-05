@@ -11,5 +11,6 @@ const char *tokenTypeToString(TokenType type);
 const char *tokenTypeToLexeme(Token* t);
 void printTokenHeader();
 void printToken(Token t);
+void showSpaces(char *dst, const char *src);
 
 #endif

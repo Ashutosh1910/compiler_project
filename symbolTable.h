@@ -12,6 +12,8 @@
 //   real    -> IEEE-754 double
 //   record  -> fields laid out one after another, in declaration order
 //   union   -> every field at offset 0; size of the largest field
+//   array   -> length elements of 8 bytes (int or real), element i at 8 * i;
+//              only variables (locals and globals) can be arrays
 //   global  -> a label G_<name> in .bss
 //   local   -> [rbp - offset]
 //   input / output parameter -> [rbp + 16 + offset], inside a block the
@@ -25,11 +27,19 @@
 #define SCALAR_SIZE 8
 // Limits that keep offsets far from int overflow and frames well inside the
 // default 8 MiB stack.
-#define MAX_TYPE_SIZE (1 << 20)  // one record or union: 1 MiB
+#define MAX_TYPE_SIZE (1 << 20)  // one record, union or array: 1 MiB
+#define MAX_ARRAY_LENGTH (MAX_TYPE_SIZE / SCALAR_SIZE)
 #define MAX_FRAME_SIZE (1 << 22) // locals, or parameters, of a function: 4 MiB
 #define MAX_STACK_USE (6 << 20)  // deepest call chain, of the usual 8 MiB stack
 
-typedef enum { TY_INT, TY_REAL, TY_RECORD, TY_UNION, TY_ERROR } TypeKind;
+typedef enum {
+  TY_INT,
+  TY_REAL,
+  TY_RECORD,
+  TY_UNION,
+  TY_ARRAY,
+  TY_ERROR
+} TypeKind;
 
 struct Type;
 
@@ -42,7 +52,7 @@ typedef struct {
 
 typedef struct Type {
   TypeKind kind;
-  char name[AST_NAME_LEN]; // "int", "real", or the defining #name
+  char name[AST_NAME_LEN]; // "int", "real", the defining #name, "int[10]"
   FieldInfo *fields;
   int numFields;
   int size;        // bytes
@@ -50,6 +60,8 @@ typedef struct Type {
   int layoutState; // 0 = not laid out, 1 = in progress, 2 = done
   int hasUnion;    // is a union or (transitively) contains one
   TypeDef *def;    // AST definition (records/unions)
+  struct Type *elem; // arrays: element type (int or real)
+  int length;        // arrays: number of elements
 } Type;
 
 typedef struct {
@@ -83,6 +95,10 @@ typedef struct FuncEntry {
   int localSize;     // bytes reserved below rbp (multiple of 16)
   int inSize;        // bytes of input parameters
   int paramSize;     // bytes of the caller-reserved block (multiple of 16)
+  // bytes one activation uses itself: return address, saved rbp, locals and
+  // the larger of its temporaries and the parameter blocks it reserves for
+  // callees (checked against the stack guard at run time)
+  int stackNeed;
   Function *ast;
 } FuncEntry;
 
@@ -90,6 +106,8 @@ typedef struct {
   Type *intType, *realType, *errorType;
   Type **types; // records and unions, in definition order
   int numTypes, capTypes;
+  Type **arrays; // array types, one per (element type, length)
+  int numArrays, capArrays;
   TypeAlias *aliases;
   int numAliases, capAliases;
   VarEntry *globals; // in declaration order
@@ -104,6 +122,7 @@ Type *addType(SymbolTable *st, TypeKind kind, const char *name, int line);
 void addAlias(SymbolTable *st, const char *name, Type *type, int line);
 Type *findType(SymbolTable *st, const char *name); // type or alias
 TypeAlias *findAlias(SymbolTable *st, const char *name);
+Type *arrayType(SymbolTable *st, Type *elem, int length); // interned
 
 FuncEntry *addFunc(SymbolTable *st, const char *name, int line);
 FuncEntry *findFunc(SymbolTable *st, const char *name);
