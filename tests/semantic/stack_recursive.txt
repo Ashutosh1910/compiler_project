@@ -1,0 +1,85 @@
+% One activation of a recursive function must fit in the 6 MiB stack limit:
+% 4 MiB of local arrays plus a 3 MiB parameter block for the recursive call.
+_big input parameter list [#rq c2, #rq c3, #rq c4] %? error: _big needs about 7340064 bytes of stack for a single call; the limit is 6291456
+output parameter list [int b2];
+	type int[131072] : d2;
+	type int[131072] : d3;
+	type int[131072] : d4;
+	type int[131072] : d5;
+	[b2] <--- call _big with parameters [c2, c3, c4];
+	return [b2];
+end
+
+_main
+	record #ra
+		type int : x;
+		type int : y;
+	endrecord
+	record #rb
+		type #ra : p;
+		type #ra : q;
+	endrecord
+	record #rc
+		type #rb : p;
+		type #rb : q;
+	endrecord
+	record #rd
+		type #rc : p;
+		type #rc : q;
+	endrecord
+	record #re
+		type #rd : p;
+		type #rd : q;
+	endrecord
+	record #rf
+		type #re : p;
+		type #re : q;
+	endrecord
+	record #rg
+		type #rf : p;
+		type #rf : q;
+	endrecord
+	record #rh
+		type #rg : p;
+		type #rg : q;
+	endrecord
+	record #ri
+		type #rh : p;
+		type #rh : q;
+	endrecord
+	record #rj
+		type #ri : p;
+		type #ri : q;
+	endrecord
+	record #rk
+		type #rj : p;
+		type #rj : q;
+	endrecord
+	record #rl
+		type #rk : p;
+		type #rk : q;
+	endrecord
+	record #rm
+		type #rl : p;
+		type #rl : q;
+	endrecord
+	record #rn
+		type #rm : p;
+		type #rm : q;
+	endrecord
+	record #ro
+		type #rn : p;
+		type #rn : q;
+	endrecord
+	record #rp
+		type #ro : p;
+		type #ro : q;
+	endrecord
+	record #rq
+		type #rp : p;
+		type #rp : q;
+	endrecord
+	type int : b2;
+	write(b2);
+	return;
+end

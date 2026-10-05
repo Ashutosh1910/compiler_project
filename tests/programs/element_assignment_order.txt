@@ -1,0 +1,9 @@
+% In an element assignment the right-hand side is evaluated before the index.
+%? stdout: Runtime error: division by zero
+%? exit: 1
+_main
+	type int[3] : c2;
+	type int : b2;
+	c2[7] <--- 1 / b2;
+	return;
+end

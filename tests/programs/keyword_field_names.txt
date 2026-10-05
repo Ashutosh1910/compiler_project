@@ -1,0 +1,17 @@
+% The new keywords stay usable as record field names.
+%? stdout: 1 2 3 4
+_main
+	record #words
+		type int : print;
+		type int : exit;
+		type int : readchar;
+		type int : writechar;
+	endrecord
+	type #words : d2;
+	d2.print <--- 1;
+	d2.exit <--- d2.print + 1;
+	d2.readchar <--- 3;
+	d2.writechar <--- d2.readchar + 1;
+	write(d2);
+	return;
+end

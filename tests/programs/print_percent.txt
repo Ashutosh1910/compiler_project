@@ -1,0 +1,12 @@
+% A % inside a string or character literal is not a comment, and print
+% writes strings literally (no printf formatting).
+%? stdout: 100% %d %s %%
+%? stdout: %
+_main
+	type int : b2;
+	b2 <--- 100;
+	print(b2, "% %d %s %%\n"); % trailing comment
+	writechar('%');
+	writechar('\n');
+	return;
+end

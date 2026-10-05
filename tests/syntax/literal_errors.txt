@@ -1,0 +1,8 @@
+% Lexical errors in character and string literals.
+_main
+	type int : b2;
+	b2 <--- ''; %? syntax-error %? lex-error: empty character literal
+	b2 <--- 'ab'; %? syntax-error %? lex-error: character literal must contain exactly one character
+	print("a\qb"); %? syntax-error %? lex-error: unknown escape sequence \q in string literal
+	return;
+end

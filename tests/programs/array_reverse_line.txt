@@ -1,0 +1,18 @@
+% readchar into array elements; elements in while conditions.
+%? stdin: hello
+%? stdout: olleh
+_main
+	type int[100] : c2;
+	type int : b2;
+	readchar(c2[0]);
+	while (c2[b2] != '\n')
+		b2 <--- b2 + 1;
+		readchar(c2[b2]);
+	endwhile
+	while (b2 > 0)
+		b2 <--- b2 - 1;
+		writechar(c2[b2]);
+	endwhile
+	writechar('\n');
+	return;
+end

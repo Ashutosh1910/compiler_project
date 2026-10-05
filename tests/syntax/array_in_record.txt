@@ -1,0 +1,8 @@
+% Arrays cannot be record fields.
+_main
+	record #r
+		type int[3] : x; %? syntax-error
+		type int : y;
+	endrecord
+	return;
+end

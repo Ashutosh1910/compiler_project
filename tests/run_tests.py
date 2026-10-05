@@ -24,6 +24,19 @@ Directories:
     tests/syntax/     programs with lexical / syntax errors
     tests/semantic/   programs with semantic errors (or "%? ok")
     tests/programs/   programs that are compiled to x86-64, run and checked
+    tests/toy/        TL programs for the toy compiler toy/toycc.txt (Part B
+                      of docs/EXTENSIONS_SPEC.md): toy/toycc.txt is built
+                      with --build, each .tl file is fed to it on stdin and
+                      the generated assembly is assembled, linked and run.
+                      Their expectations are "#?" lines (TL comments):
+                          #? stdout: <text>   an expected output line
+                          #? exit: <n>        exit status (default 0)
+                          #? error: <line>: <message>
+                                              toycc must fail with this error
+                      The toy tests are skipped while toy/toycc.txt does
+                      not exist.
+    tests/gen/        the scripts that generate tests/semantic/
+                      depth_new_roots.txt and tests/toy/limits_*.tl
 """
 import argparse
 import concurrent.futures
@@ -423,6 +436,97 @@ LEXER_CASES = [
      ["TK_SQL", "TK_ID b2", "TK_SQR", "TK_ASSIGNOP", "TK_CALL", "TK_FUNID _f",
       "TK_WITH", "TK_PARAMETERS", "TK_SQL", "TK_ID c3", "TK_COMMA",
       "TK_ID d4", "TK_SQR", "TK_SEM"], []),
+    ("new keywords", "readchar writechar print exit",
+     ["TK_READCHAR readchar", "TK_WRITECHAR writechar", "TK_PRINT print",
+      "TK_EXIT exit"], []),
+    ("new keyword look-alikes are field ids", "prints exits readchars printx",
+     ["TK_FIELDID prints", "TK_FIELDID exits", "TK_FIELDID readchars",
+      "TK_FIELDID printx"], []),
+    ("new keywords are case sensitive", "Print",
+     ["TK_FIELDID rint"], [(1, "P not recognized")]),
+    ("character literals",
+     r"""'a' '0' '~' '"' '\n' '\t' '\r' '\0' '\\' '\'' '\"'""",
+     ["TK_CHARLIT 'a'", "TK_CHARLIT '0'", "TK_CHARLIT '~'",
+      "TK_CHARLIT '\"'", r"TK_CHARLIT '\n'", r"TK_CHARLIT '\t'",
+      r"TK_CHARLIT '\r'", r"TK_CHARLIT '\0'", r"TK_CHARLIT '\\'",
+      r"TK_CHARLIT '\''", r"TK_CHARLIT '\"'"], []),
+    ("space character literal is displayed as \\x20", "' ' b2",
+     [r"TK_CHARLIT '\x20'", "TK_ID b2"], []),
+    ("character literal in an expression", "b2<---'a'+1;",
+     ["TK_ID b2", "TK_ASSIGNOP", "TK_CHARLIT 'a'", "TK_PLUS", "TK_NUM 1",
+      "TK_SEM"], []),
+    ("empty character literal", "'' b2", ["TK_ID b2"],
+     [(1, "empty character literal")]),
+    ("character literal with two characters", "'ab' b2", ["TK_ID b2"],
+     [(1, "character literal must contain exactly one character")]),
+    ("three quotes", "''' b2", [],
+     [(1, "empty character literal"),
+      (1, "character literal must contain exactly one character")]),
+    ("unterminated character literal", "'a\nb2", ["TK_ID b2 @2"],
+     [(1, "unterminated character literal")]),
+    ("character literal at end of file", "b2 '", ["TK_ID b2"],
+     [(1, "unterminated character literal")]),
+    ("unknown escape in a character literal", r"'\q' b2", ["TK_ID b2"],
+     [(1, r"unknown escape sequence \q in character literal")]),
+    ("control byte in a character literal", "'\x01' b2", ["TK_ID b2"],
+     [(1, r"byte \x01 not allowed in character literal")]),
+    ("raw tab in a character literal", "'\t' b2", ["TK_ID b2"],
+     [(1, r"byte \x09 not allowed in character literal")]),
+    ("string literal", '"hello" b2', ['TK_STR "hello"', "TK_ID b2"], []),
+    ("empty string literal", '""', ['TK_STR ""'], []),
+    ("string literal with escapes", r'"a\n\t\r\\\"\'b"',
+     [r'TK_STR "a\n\t\r\\\"\'b"'], []),
+    ("spaces in a string are displayed as \\x20", '"a b  c"',
+     [r'TK_STR "a\x20b\x20\x20c"'], []),
+    ("percent inside a string is not a comment", '"50% done" b2',
+     [r'TK_STR "50%\x20done"', "TK_ID b2"], []),
+    ("string lexeme keeps 30 bytes", '"' + "a" * 40 + '"',
+     ['TK_STR "' + "a" * 29], []),
+    ("string of 255 characters", '"' + "x" * 255 + '" b2',
+     ['TK_STR "' + "x" * 29, "TK_ID b2"], []),
+    ("an escape counts as one character", '"' + "\\n" * 255 + '"',
+     ['TK_STR "' + "\\n" * 14 + "\\"], []),
+    ("string of 256 characters", '"' + "x" * 256 + '" b2', ["TK_ID b2"],
+     [(1, "string literal longer than 255 characters")]),
+    ("unterminated string literal", '"abc\nb2', ["TK_ID b2 @2"],
+     [(1, "unterminated string literal")]),
+    ("string literal at end of file", 'b2 "abc', ["TK_ID b2"],
+     [(1, "unterminated string literal")]),
+    ("unknown escape in a string", r'"a\qb" b2', ["TK_ID b2"],
+     [(1, r"unknown escape sequence \q in string literal")]),
+    ("no NUL escape in strings", r'"\0" b2', ["TK_ID b2"],
+     [(1, r"unknown escape sequence \0 in string literal")]),
+    ("two bad escapes give two errors", r'"\q\w" b2', ["TK_ID b2"],
+     [(1, r"unknown escape sequence \q in string literal"),
+      (1, r"unknown escape sequence \w in string literal")]),
+    ("raw tab in a string", '"a\tb" b2', ["TK_ID b2"],
+     [(1, r"byte \x09 not allowed in string literal")]),
+    ("non-ASCII bytes in a string", '"é" b2', ["TK_ID b2"],
+     [(1, r"byte \xC3 not allowed in string literal"),
+      (1, r"byte \xA9 not allowed in string literal")]),
+    ("line numbers after a bad string", '"abc\n"def" b2',
+     ['TK_STR "def" @2', "TK_ID b2 @2"],
+     [(1, "unterminated string literal")]),
+    ("backslash at end of file in a character literal", "b2 '\\",
+     ["TK_ID b2"], [(1, "unterminated character literal")]),
+    ("backslash before LF in a character literal", "'\\\nb2",
+     ["TK_ID b2 @2"], [(1, "unterminated character literal")]),
+    ("CR ends an unterminated character literal", "'a\r\nb2",
+     ["TK_ID b2 @2"], [(1, "unterminated character literal")]),
+    ("CR ends an unterminated string literal", '"abc\r\nb2',
+     ["TK_ID b2 @2"], [(1, "unterminated string literal")]),
+    ("backslash before CR in a string literal", '"a\\\r\nb2',
+     ["TK_ID b2 @2"], [(1, "unterminated string literal")]),
+    ("literals on CRLF lines", "b2 <--- 'a';\r\nprint(\"x\");\r\n",
+     ["TK_ID b2 @1", "TK_ASSIGNOP", "TK_CHARLIT 'a'", "TK_SEM",
+      "TK_PRINT @2", "TK_OP", 'TK_STR "x"', "TK_CL", "TK_SEM"], []),
+    ("apostrophe in a comment", "b2 % it's\nc3",
+     ["TK_ID b2 @1", "TK_COMMENT @1", "TK_ID c3 @2"], []),
+    ("array declaration", "type int[10] : b2;",
+     ["TK_TYPE", "TK_INT", "TK_SQL", "TK_NUM 10", "TK_SQR", "TK_COLON",
+      "TK_ID b2", "TK_SEM"], []),
+    ("element access", "b2[b3+1]",
+     ["TK_ID b2", "TK_SQL", "TK_ID b3", "TK_PLUS", "TK_NUM 1", "TK_SQR"], []),
 ]
 
 
@@ -642,6 +746,22 @@ def add_program_tests(suite):
         suite.add(name, lambda f=f, stdin=stdin, stdout=stdout:
                   compile_and_run(os.path.join(ROOT, f), stdin, 0, stdout))
 
+    def writechar_byte_255():
+        # writechar(0 - 1) writes the byte 0xFF (value mod 256)
+        src = scratch("wc255", "_main\n\twritechar(0 - 1);\n"
+                      "\twritechar(10);\n\treturn;\nend\n")
+        exe = os.path.join(BUILD, "bin", "writechar255")
+        p = compiler("--build", src, exe)
+        expect(p.returncode == 0, p.stdout[-1000:])
+        r = subprocess.run([exe], capture_output=True, timeout=10)
+        expect(r.returncode == 0 and r.stdout == b"\xff\n",
+               "got %r, exit %d" % (r.stdout, r.returncode))
+    name = "run: writechar(0 - 1) writes byte 255"
+    if CAN_RUN:
+        suite.add(name, writechar_byte_255)
+    else:
+        suite.skip(name, "needs x86-64 Linux with nasm")
+
     def every_program_assembles():
         # the assembly must at least be accepted by nasm even where it
         # cannot run
@@ -661,6 +781,115 @@ def add_program_tests(suite):
                        "%s" % (f, r.stderr[-1500:]))
     suite.add("codegen: assembly for every test program is valid NASM",
               every_program_assembles)
+
+
+# ===================================================== toy compiler tests
+
+TOY_SRC = os.path.join(ROOT, "toy", "toycc.txt")
+TOY_TESTS = os.path.join(TESTS, "toy")
+_toy = {}
+_toy_lock = threading.Lock()
+
+
+def toy_annotations(path, data):
+    """#? stdout: / #? exit: / #? error: lines at the start of a TL file."""
+    ann = {"stdout": [], "exit": 0, "error": None}
+    for lineno, line in enumerate(data.decode("latin-1").splitlines(), 1):
+        if not line.startswith("#?"):
+            continue
+        key, _, value = line[2:].strip().partition(":")
+        key, value = key.strip(), value.strip()
+        if key == "stdout":
+            ann["stdout"].append(value)
+        elif key == "exit":
+            ann["exit"] = int(value)
+        elif key == "error":
+            ann["error"] = value
+        else:
+            raise Failure("%s:%d: unknown directive %r" % (path, lineno, key))
+    return ann
+
+
+def toycc():
+    """Builds toy/toycc.txt once; tests run in parallel threads."""
+    with _toy_lock:
+        if "exe" not in _toy:
+            exe = os.path.join(BUILD, "bin", "toycc")
+            p = compiler("--build", TOY_SRC, exe, timeout=120)
+            _toy["exe"] = exe if p.returncode == 0 else None
+            _toy["log"] = p.stdout[-3000:] + p.stderr[-1000:]
+    expect(_toy["exe"], "toy/toycc.txt does not build:\n" + _toy["log"])
+    return _toy["exe"]
+
+
+def run_bytes(args, data, timeout):
+    p = subprocess.run(args, input=data, capture_output=True,
+                       timeout=timeout)
+    if p.returncode < 0:
+        raise Failure("%s was killed by signal %d (crash)" %
+                      (args[0], -p.returncode))
+    return p
+
+
+def add_toy_tests(suite):
+    if not os.path.exists(TOY_SRC):
+        # every toy test is listed as skipped, so the count shows how many
+        # are waiting for the toy compiler
+        why = "toy/toycc.txt not written yet"
+        suite.skip("parser: parse tree of toy/toycc.txt", why)
+        suite.skip("toy: toycc.txt compiles without errors", why)
+        for f in sorted(os.listdir(TOY_TESTS)):
+            if f.endswith(".tl"):
+                suite.skip("toy: " + f, why)
+        return
+    suite.add("parser: parse tree of toy/toycc.txt",
+              lambda: check_parse_tree(TOY_SRC))
+
+    def no_errors():
+        p = compiler("--check", TOY_SRC, timeout=60)
+        expect(p.returncode == 0, p.stdout[-2000:])
+    suite.add("toy: toycc.txt compiles without errors", no_errors)
+
+    for f in sorted(os.listdir(TOY_TESTS)):
+        if not f.endswith(".tl"):
+            continue
+        path, name = os.path.join(TOY_TESTS, f), "toy: " + f
+        if not CAN_RUN:
+            suite.skip(name, "needs x86-64 Linux with nasm")
+            continue
+
+        def test(path=path, f=f):
+            data = open(path, "rb").read()
+            ann = toy_annotations(path, data)
+            p = run_bytes([toycc()], data, 20)
+            out = p.stdout.decode("latin-1")
+            if ann["error"] is not None:
+                want = "error: " + ann["error"]
+                last = out.splitlines()[-1:]
+                expect(p.returncode == 1,
+                       "toycc exit status %d, expected 1" % p.returncode)
+                expect(last == [want], "last line %r, expected %r" %
+                       (last, want))
+                expect(out.endswith("\n"),
+                       "the error line must end with LF")
+                return
+            expect(p.returncode == 0, "toycc failed (exit %d):\n%s" %
+                   (p.returncode, out[-1500:]))
+            base = os.path.join(BUILD, "bin", "toy_" + f[:-3])
+            with open(base + ".asm", "w", encoding="latin-1") as a:
+                a.write(out)
+            r = run(["nasm", "-f", "elf64", base + ".asm", "-o", base + ".o"])
+            expect(r.returncode == 0, "nasm rejected the output of toycc:\n" +
+                   r.stderr[-1500:])
+            r = run(["gcc", "-no-pie", base + ".o", "-o", base])
+            expect(r.returncode == 0, "linking failed:\n" + r.stderr[-1500:])
+            r = run_bytes([base], b"", 10)
+            got = r.stdout.decode("latin-1").splitlines()
+            expect(got == ann["stdout"], "output differs\nexpected: %r\n"
+                   "     got: %r" % (ann["stdout"], got))
+            expect(r.returncode == ann["exit"], "exit status %d, expected %d"
+                   % (r.returncode, ann["exit"]))
+        suite.add(name, test)
 
 
 # ===================================================== sample test files
@@ -873,6 +1102,62 @@ def add_driver_tests(suite):
     suite.add("driver: --symbols prints types, aliases and addresses",
               symbols_flag)
 
+    extensions = os.path.join(TESTS, "semantic", "extensions_ok.txt")
+
+    def ast_extensions():
+        p = compiler("--ast", extensions)
+        for needle in ("Record #rec (line 34)",
+                       "Field print : int",
+                       "Declare c2 : int[16] (global) (line 41)",
+                       "Declare c3 : real[4] (line 42)",
+                       "ReadChar (line 45): b2",
+                       "While (line 46): b2 != '\\n'",
+                       "Assign (line 47): c2[b3] <--- b2",
+                       "Assign (line 51): d2.print <--- (c2[0] + 'a')",
+                       "ReadChar (line 53): d2.readchar",
+                       "Assign (line 54): c3[(b3 - 1)] <--- "
+                       "(c2[(b3 - 1)] / 2.00)",
+                       "If (line 55): (c3[0] > 1.50) &&& "
+                       "(c2[c2[0]] == '\\t')",
+                       "WriteChar (line 56): c2[0]",
+                       'Print (line 58): "count: ", b3, ", first: ", c2[0], '
+                       '", half: ", c3[0], "\\n"',
+                       "Call (line 59): [b3] <--- _count with [b2]",
+                       "Write (line 61): c2[b3]",
+                       "Exit (line 63): 2"):
+            expect(needle in p.stdout, "%r missing from --ast output:\n%s" %
+                   (needle, p.stdout[-2500:]))
+    suite.add("driver: --ast prints the extensions", ast_extensions)
+
+    def symbols_arrays():
+        p = compiler("--symbols", extensions)
+        rows = [" ".join(l.split()) for l in p.stdout.splitlines()]
+        for needle in ("#rec record 32 print:int@0 exit:int@8 "
+                       "readchar:int@16 writechar:int@24",
+                       "c2 global int[16] 128 G_c2 41",
+                       "d2 local #rec 32 rbp-32 40",
+                       "c3 local real[4] 32 rbp-64 42",
+                       "b3 local int 8 rbp-80 44",
+                       "Function _main (locals 80 bytes, parameter block 0 "
+                       "bytes)"):
+            expect(needle in rows, "%r missing from --symbols output:\n%s" %
+                   (needle, p.stdout[-2500:]))
+    suite.add("driver: --symbols prints arrays", symbols_arrays)
+
+    def remove_comments_literals():
+        p = compiler(os.path.join(TESTS, "programs", "print_percent.txt"),
+                     os.path.join(BUILD, "src", "percent.out"),
+                     stdin="1\n0\n")
+        for needle in ('\tprint(b2, "% %d %s %%\\n"); \n',
+                       "\twritechar('%');\n"):
+            expect(needle in p.stdout, "%r missing from option 1 output:\n%s"
+                   % (needle, p.stdout[-1500:]))
+        for needle in ("trailing comment", "A % inside"):
+            expect(needle not in p.stdout, "comment text %r was not removed:"
+                   "\n%s" % (needle, p.stdout[-1500:]))
+    suite.add("driver: option 1 keeps % inside literals",
+              remove_comments_literals)
+
     def unwritable_output():
         p = compiler("--parse", src, os.path.join(BUILD, "no", "such", "x"))
         expect(p.returncode == 1 and "Cannot open" in p.stdout, p.stdout)
@@ -994,6 +1279,7 @@ def main():
     add_semantic_tests(suite)
     add_sample_file_tests(suite)
     add_program_tests(suite)
+    add_toy_tests(suite)
     add_driver_tests(suite)
     add_stress_tests(suite)
     suite.run(args.j)

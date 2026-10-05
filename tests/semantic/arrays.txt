@@ -1,0 +1,55 @@
+% Arrays: declarations, indexing, and the places a whole array may not appear.
+_f input parameter list [int b2]
+output parameter list [int b3];
+	b3 <--- b2;
+	return [b3];
+end
+
+_g input parameter list [int b2]
+output parameter list [int b3];
+	type int[4] : c3;
+	b3 <--- 1;
+	return [c3]; %? error: array c3 cannot be passed to or returned from a function
+end
+
+_main
+	record #pt
+		type int : x;
+		type int : y;
+	endrecord
+	type int[10] : b2;
+	type real[3] : c2;
+	type int[0] : b4; %? error: array length must be between 1 and 131072, not 0
+	type int[131073] : b5; %? error: array length must be between 1 and 131072, not 131073
+	type #pt[2] : b6; %? error: array element type must be int or real, not #pt
+	type int[131072] : d2 : global;
+	type int : b3;
+	type real : c3;
+	type #pt : d3;
+	b2[0] <--- 1;
+	b2[b3 + 1] <--- b2[b3] * 2;
+	c2[2] <--- b2[1];
+	d2[131071] <--- b2['a' - 'a'] * 0;
+	b2[1] <--- c2[0]; %? error: type mismatch: cannot assign a value of type real to b2[...] of type int
+	b2[c3] <--- 1; %? error: array index must be an int expression, not real
+	b2[d3] <--- 1; %? error: array index must be an int expression, not #pt
+	b3[0] <--- 1; %? error: b3 is not an array (it has type int)
+	d3[1] <--- 1; %? error: d3 is not an array (it has type #pt)
+	b3 <--- b2; %? error: array b2 cannot be used without an index
+	b2 <--- 0; %? error: array b2 cannot be used without an index
+	b3 <--- b2.x; %? error: b2 has type int[10] and has no field x
+	if (b2 == 0) then %? error: array b2 cannot be used without an index
+		write(b2); %? error: array b2 cannot be used without an index
+	endif
+	read(b2); %? error: array b2 cannot be used without an index
+	readchar(b2); %? error: array b2 cannot be used without an index
+	print(b2); %? error: array b2 cannot be used without an index
+	[b3] <--- call _f with parameters [b2]; %? error: array b2 cannot be passed to or returned from a function
+	[b2] <--- call _f with parameters [b3]; %? error: array b2 cannot be passed to or returned from a function
+	b2[b7] <--- 1; %? error: variable b7 is not declared
+	if (b2[b3] < c2[1]) then
+		read(b2[b3]);
+		write(c2[b2[0]]);
+	endif
+	return;
+end

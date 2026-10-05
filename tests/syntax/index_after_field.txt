@@ -1,0 +1,6 @@
+% An index cannot follow a field access.
+_main
+	type int : b2;
+	b2.x[1] <--- 2; %? syntax-error
+	return;
+end

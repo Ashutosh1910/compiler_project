@@ -1,0 +1,20 @@
+% Character literals are int constants; print writes ints (%lld), reals
+% (%.2f) and strings without adding a newline.
+%? stdout: 97 48 10 9 13 0 92 39 34 32
+%? stdout: a1b-2c2.50d
+%? stdout: q"b\s'%
+%? stdout: 3
+%? stdout: 100
+_main
+	type int : b2;
+	type real : c2;
+	print('a', " ", '0', " ", '\n', " ", '\t', " ", '\r', " ", '\0', " ", '\\', " ", '\'', " ", '"', " ", ' ', "\n");
+	b2 <--- 0 - 2;
+	c2 <--- 2.50;
+	print("a", 1, "b", b2, "c", c2, "d\n");
+	print("q\"b\\s'%\n");
+	b2 <--- 'd' - 'a';
+	write(b2);
+	write('d');
+	return;
+end

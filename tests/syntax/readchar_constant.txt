@@ -1,0 +1,5 @@
+% readchar needs a variable.
+_main
+	readchar('a'); %? syntax-error
+	return;
+end

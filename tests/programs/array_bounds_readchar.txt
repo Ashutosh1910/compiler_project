@@ -1,0 +1,12 @@
+% readchar into an element checks the index before reading.
+%? stdin: x
+%? stdout: Runtime error: index -1 out of bounds for array c2 of length 3 at line 9
+%? exit: 1
+_main
+	type int[3] : c2;
+	type int : b2;
+	b2 <--- 3;
+	readchar(c2[b2 - 4]);
+	write(c2[0]);
+	return;
+end

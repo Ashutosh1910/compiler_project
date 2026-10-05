@@ -1,14 +1,14 @@
-% A function may only call functions defined above it, never itself, and
-% function names are unique.
+% A function may call any function, including itself and functions defined
+% later in the file; function names are unique.
 _first input parameter list [int b2]
 output parameter list [int b3];
-	[b3] <--- call _second with parameters [b2]; %? error: function _second is called before it is defined
+	[b3] <--- call _second with parameters [b2];
 	return [b3];
 end
 
 _second input parameter list [int b2]
 output parameter list [int b3];
-	[b3] <--- call _second with parameters [b2]; %? error: function _second cannot call itself
+	[b3] <--- call _second with parameters [b2];
 	return [b3];
 end
 
@@ -23,5 +23,6 @@ _main
 	type int : b3;
 	[b3] <--- call _first with parameters [b2];
 	[b3] <--- call _second with parameters [b2];
+	call _nowhere with parameters [b2]; %? error: function _nowhere is not defined
 	return;
 end

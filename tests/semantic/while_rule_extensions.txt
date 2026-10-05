@@ -1,0 +1,49 @@
+% The while rule with array elements, readchar and calls.
+_touch input parameter list [int b2];
+	b5 <--- b5 + 1;
+	return;
+end
+
+_same input parameter list [int b2]
+output parameter list [int b3];
+	b3 <--- b2;
+	return [b3];
+end
+
+_main
+	type int : b5 : global;
+	type int[5] : c2;
+	type int : b2;
+	type int : b3;
+	while (c2[b2] == 0)
+		b2 <--- b2 + 1;
+	endwhile
+	while (c2[b2] == 0)
+		c2[3] <--- 1;
+	endwhile
+	while (c2[0] == 0) %? error: none of the variables in the while condition is updated inside the loop
+		b3 <--- 1;
+	endwhile
+	while (b3 != 'x')
+		readchar(b3);
+	endwhile
+	while ('a' < 'b') %? error: none of the variables in the while condition is updated
+		b3 <--- 1;
+	endwhile
+	while (b5 < 10)
+		call _touch with parameters [b2];
+	endwhile
+	while (b3 < 10) %? error: none of the variables in the while condition is updated
+		call _touch with parameters [b2];
+	endwhile
+	while (c2[b3] < 10)
+		[b3] <--- call _same with parameters [b2];
+	endwhile
+	while (c2 == 0) %? error: array c2 cannot be used without an index
+		b3 <--- 1;
+	endwhile
+	while (b3[0] < 1) %? error: b3 is not an array (it has type int)
+		b2 <--- 1;
+	endwhile
+	return;
+end

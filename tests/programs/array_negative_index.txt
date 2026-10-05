@@ -1,0 +1,16 @@
+% Negative indices are out of bounds too; the message names the array.
+%? stdout: Runtime error: index -1 out of bounds for array d2 of length 3 at line 5
+%? exit: 1
+_set input parameter list [int b2];
+	d2[b2] <--- 7;
+	return;
+end
+
+_main
+	type int[3] : d2 : global;
+	type int : b2;
+	b2 <--- 0 - 1;
+	call _set with parameters [b2];
+	write(d2[0]);
+	return;
+end
