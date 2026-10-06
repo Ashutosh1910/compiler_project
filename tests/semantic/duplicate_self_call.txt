@@ -1,0 +1,19 @@
+% A second definition of _f that calls _f: only the duplicate definition is
+% reported, not argument errors against the first _f's signature.
+_f input parameter list [int b2]
+output parameter list [int b3];
+	b3 <--- b2;
+	return [b3];
+end
+
+_f input parameter list [real c2]; %? error: function _f is already defined at line 3
+	call _f with parameters [c2];
+	return;
+end
+
+_main
+	type int : b2;
+	type int : b3;
+	[b3] <--- call _f with parameters [b2];
+	return;
+end

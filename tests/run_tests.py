@@ -1195,6 +1195,29 @@ def add_driver_tests(suite):
                    "%r: %s" % (stdin[-8:], p.stdout[-500:]))
     suite.add("driver: menu choices are whole lines", menu_reads_lines)
 
+    def incompatible_grammar():
+        # an old grammar.txt in the current directory is ignored in favour
+        # of the one next to the executable ...
+        old = os.path.join(BUILD, "oldgrammar")
+        os.makedirs(old, exist_ok=True)
+        g = subprocess.run(["git", "show", "96fdcfb:grammar.txt"], cwd=ROOT,
+                           capture_output=True, text=True)
+        if g.returncode != 0:
+            raise Failure("cannot read the pre-extension grammar from git")
+        with open(os.path.join(old, "grammar.txt"), "w") as f:
+            f.write(g.stdout)
+        p = compiler("--check", src, cwd=old)
+        expect(p.returncode == 0, "old ./grammar.txt must not be used:\n" +
+               p.stdout[-500:])
+        # ... and a compiler whose own grammar is incompatible stops cleanly
+        lone = os.path.join(old, "compiler")
+        shutil.copy(COMPILER, lone)
+        p = run([lone, "--check", src], cwd=old)
+        expect(p.returncode == 2 and "does not match this compiler" in p.stdout
+               + p.stderr, "exit %d: %s" % (p.returncode, p.stdout[-500:]))
+    suite.add("driver: an incompatible grammar.txt is rejected cleanly",
+              incompatible_grammar)
+
     def other_directory():
         # grammar.txt is found next to the executable
         p = compiler("--check", src, cwd=os.path.join(BUILD, "src"))

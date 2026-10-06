@@ -1,0 +1,25 @@
+% A chain that cannot complete even one activation of a recursive callee is
+% rejected at compile time: _main's 4 MiB of arrays plus one activation of
+% _rec (16 + 2 MiB + 8016 bytes of temporaries) and its 16-byte parameter
+% block: 16 + 4194304 + 16 + 2105184 = 6299520 bytes.
+_rec input parameter list [int b2]
+output parameter list [int b3];
+	type int[131072] : d2;
+	type int[131072] : d3;
+	b3 <--- b2;
+	if (b2 > 0) then
+		[b3] <--- call _rec with parameters [b4];
+	endif
+	return [b3];
+end
+
+_main %? error: _main needs about 6299520 bytes of stack for a single call; the limit is 6291456
+	type int[131072] : d2;
+	type int[131072] : d3;
+	type int[131072] : d4;
+	type int[131072] : d5;
+	type int : b4 : global;
+	type int : b5 : global;
+	[b5] <--- call _rec with parameters [b4];
+	return;
+end

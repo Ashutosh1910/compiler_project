@@ -1,6 +1,6 @@
-% One activation of a recursive function must fit in the 6 MiB stack limit:
-% 4 MiB of local arrays plus a 3 MiB parameter block for the recursive call.
-_big input parameter list [#rq c2, #rq c3, #rq c4] %? error: _big needs about 7340064 bytes of stack for a single call; the limit is 6291456
+% A recursive function must fit one activation plus one activation of its
+% recursive callee (here itself) in the 6 MiB stack limit: 2 x 7340064 bytes.
+_big input parameter list [#rq c2, #rq c3, #rq c4] %? error: _big needs about 14680128 bytes of stack for a single call; the limit is 6291456
 output parameter list [int b2];
 	type int[131072] : d2;
 	type int[131072] : d3;
